@@ -1,0 +1,7 @@
+val moduleLibraryName by extra("eaqueldumper")
+val magiskModuleId by extra("eaquel_dumper")
+val moduleName by extra("Eaquel_Dumper")
+val moduleAuthor by extra("Eaquel")
+val moduleDescription by extra("Runtime ELF integrity analysis and binary resolver for AOSP.")
+val moduleVersion by extra("v1.0.0")
+val moduleVersionCode by extra(1)
