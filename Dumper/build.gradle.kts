@@ -72,6 +72,10 @@ androidComponents {
         val zipFileName = "${magiskModuleId.replace('_', '-')}-${moduleVersion}-${variantLower}.zip"
         val skeletonDir = file("$outDir/skeleton_$variantLower")
 
+        val skeletonLibDir = skeletonDir.resolve("lib")
+        val skeletonZygiskDir = skeletonDir.resolve("zygisk")
+        val capturedLibraryName = moduleLibraryName
+
         val prepareTask = tasks.register<Sync>("prepareSkeleton$variantCapped") {
             into(skeletonDir)
 
@@ -97,15 +101,16 @@ androidComponents {
             }
 
             doLast {
-                val zygiskDir = file("$skeletonDir/zygisk").also { it.mkdirs() }
-                fileTree("$skeletonDir/lib").visit {
-                    if (!this.isDirectory) return@visit
-                    val src = Paths.get("${this.file.absolutePath}/lib${moduleLibraryName}.so")
-                    val dst = Paths.get("${zygiskDir.absolutePath}/${this.path}.so")
-                    Files.createDirectories(dst.parent)
-                    Files.move(src, dst)
-                }
-                file("$skeletonDir/lib").deleteRecursively()
+                skeletonZygiskDir.mkdirs()
+                skeletonLibDir.walkTopDown()
+                    .filter { it.isDirectory && it != skeletonLibDir }
+                    .forEach { abiDir ->
+                        val src = Paths.get("${abiDir.absolutePath}/lib${capturedLibraryName}.so")
+                        val dst = Paths.get("${skeletonZygiskDir.absolutePath}/${abiDir.name}.so")
+                        Files.createDirectories(dst.parent)
+                        if (src.toFile().exists()) Files.move(src, dst)
+                    }
+                skeletonLibDir.deleteRecursively()
             }
         }
 
