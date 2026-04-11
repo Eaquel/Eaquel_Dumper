@@ -36,6 +36,12 @@ android {
         }
     }
 
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+        }
+    }
+
     buildFeatures {
         prefab = true
     }
@@ -110,7 +116,7 @@ androidComponents {
             destinationDirectory.set(outDir)
         }
 
-        tasks.named("assemble$variantCapped") {
+        tasks.matching { it.name == "assemble$variantCapped" }.configureEach {
             finalizedBy(zipTask)
         }
 
