@@ -6,13 +6,13 @@ plugins {
     id("com.android.library")
 }
 
-val moduleLibraryName: String by project
-val magiskModuleId: String by project
-val moduleName: String by project
-val moduleAuthor: String by project
-val moduleDescription: String by project
-val moduleVersion: String by project
-val moduleVersionCode: String by project
+val moduleLibraryName: String by rootProject.extra
+val magiskModuleId: String by rootProject.extra
+val moduleName: String by rootProject.extra
+val moduleAuthor: String by rootProject.extra
+val moduleDescription: String by rootProject.extra
+val moduleVersion: String by rootProject.extra
+val moduleVersionCode: String by rootProject.extra
 
 val outDir: File by rootProject.extra
 
