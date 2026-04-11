@@ -5,10 +5,16 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <cinttypes>
-#include "Hack.h"
 #include "Zygisk.hpp"
 #include "Target.h"
+
+#define DO_API(r, n, p) r (*n) p = nullptr;
+#define DO_API_NO_RETURN(r, n, p) r (*n) p = nullptr;
 #include "Core.h"
+#undef DO_API
+#undef DO_API_NO_RETURN
+
+void hack_prepare(const char *game_data_dir, void *data, size_t length);
 
 using zygisk::Api;
 using zygisk::AppSpecializeArgs;
@@ -31,7 +37,6 @@ public:
 
     void postAppSpecialize(const AppSpecializeArgs *) override {
         if (!enable_hack) return;
-
         std::thread hack_thread(hack_prepare, game_data_dir, bridge_data, bridge_length);
         hack_thread.detach();
     }
@@ -61,26 +66,26 @@ private:
     }
 
     void loadArmBridgePayload() {
-    const char* path = nullptr;
+        const char *path = nullptr;
 #if defined(__i386__)
-    path = "zygisk/armeabi-v7a.so";
+        path = "zygisk/armeabi-v7a.so";
 #elif defined(__x86_64__)
-    path = "zygisk/arm64-v8a.so";
+        path = "zygisk/arm64-v8a.so";
 #else
-    return;
-#endif
-    int dirfd = api->getModuleDir();
-    int fd = openat(dirfd, path, O_RDONLY);
-    if (fd == -1) {
-        LOGW("arm bridge payload not found at %s", path);
         return;
+#endif
+        int dirfd = api->getModuleDir();
+        int fd = openat(dirfd, path, O_RDONLY);
+        if (fd == -1) {
+            LOGW("arm bridge payload not found at %s", path);
+            return;
+        }
+        struct stat sb{};
+        fstat(fd, &sb);
+        bridge_length = static_cast<size_t>(sb.st_size);
+        bridge_data = mmap(nullptr, bridge_length, PROT_READ, MAP_PRIVATE, fd, 0);
+        close(fd);
     }
-    struct stat sb{};
-    fstat(fd, &sb);
-    bridge_length = static_cast<size_t>(sb.st_size);
-    bridge_data = mmap(nullptr, bridge_length, PROT_READ, MAP_PRIVATE, fd, 0);
-    close(fd);
-}
 };
 
 REGISTER_ZYGISK_MODULE(EaquelDumperModule)

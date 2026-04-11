@@ -34,7 +34,21 @@ jobs:
           cache: gradle
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ""
+
+      - name: Cache NDK and CMake
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk/29.0.14206865
+            /usr/local/lib/android/sdk/cmake/3.22.1
+          key: android-ndk-29.0.14206865-cmake-3.22.1
+
+      - name: Install NDK and CMake
+        run: |
+          sdkmanager "ndk;29.0.14206865" "cmake;3.22.1"
 
       - name: Grant wrapper permissions
         run: chmod +x ./gradlew

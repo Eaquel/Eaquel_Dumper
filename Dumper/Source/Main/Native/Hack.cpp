@@ -1,4 +1,3 @@
-#include "Hack.h"
 #include "Core.h"
 #include <cstring>
 #include <cstdio>
