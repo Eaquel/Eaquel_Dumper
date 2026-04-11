@@ -26,19 +26,19 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Setup Java 21
+      - name: Setup Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
           cache: gradle
 
-      - name: Setup Android SDK
+      - name: Setup Android
         uses: android-actions/setup-android@v4
         with:
           packages: ""
 
-      - name: Cache NDK and CMake
+      - name: Cache
         uses: actions/cache@v4
         with:
           path: |
@@ -46,25 +46,25 @@ jobs:
             /usr/local/lib/android/sdk/cmake/3.22.1
           key: android-ndk-29.0.14206865-cmake-3.22.1
 
-      - name: Install NDK and CMake
+      - name: Install Manager
         run: |
           sdkmanager "ndk;29.0.14206865" "cmake;3.22.1"
 
-      - name: Grant wrapper permissions
+      - name: Grant Permissions
         run: chmod +x ./gradlew
 
-      - name: Inject target package
+      - name: Inject Target
         run: |
           sed -i 's/#define GamePackageName "[^"]*"/#define GamePackageName "${{ github.event.inputs.package_name }}"/' Dumper/Source/Main/Native/Target.h
           sed -i 's/val moduleDescription by extra(".*")/val moduleDescription by extra("[${{ github.event.inputs.package_name }}] Runtime ELF integrity analysis and binary resolver for AOSP.")/' module.gradle.kts
 
-      - name: Build
+      - name: Building
         run: |
           VARIANT="${{ github.event.inputs.build_variant }}"
           VARIANT_CAPPED="$(echo ${VARIANT:0:1} | tr '[:lower:]' '[:upper:]')${VARIANT:1}"
           ./gradlew :Dumper:assemble${VARIANT_CAPPED} --no-daemon --stacktrace
 
-      - name: Upload module folder
+      - name: Upload Dumper
         uses: actions/upload-artifact@v4
         with:
           name: eaquel-dumper-${{ github.event.inputs.package_name }}-${{ github.event.inputs.build_variant }}
@@ -72,7 +72,7 @@ jobs:
           retention-days: 7
           compression-level: 9
 
-      - name: Upload zip
+      - name: Upload Folder
         uses: actions/upload-artifact@v4
         with:
           name: eaquel-dumper-zip-${{ github.event.inputs.build_variant }}
