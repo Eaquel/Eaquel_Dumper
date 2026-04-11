@@ -1,7 +1,6 @@
 #!/bin/sh
 
 APP_BASE_NAME=$(basename "$0")
-DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
 
 die() {
     echo "ERROR: $*"
@@ -21,7 +20,10 @@ else
     JAVA=$(which java 2>/dev/null) || die "No java found in PATH. Install JDK 21."
 fi
 
-exec "$JAVA" $DEFAULT_JVM_OPTS \
+exec "$JAVA" \
+    -Xmx2g \
+    -Xms512m \
+    -Dfile.encoding=UTF-8 \
     -classpath "$WRAPPER_JAR" \
     org.gradle.wrapper.GradleWrapperMain \
     "$@"
