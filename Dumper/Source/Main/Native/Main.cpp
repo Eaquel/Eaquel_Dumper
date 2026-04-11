@@ -61,25 +61,26 @@ private:
     }
 
     void loadArmBridgePayload() {
+    const char* path = nullptr;
 #if defined(__i386__)
-        constexpr auto path = "zygisk/armeabi-v7a.so";
+    path = "zygisk/armeabi-v7a.so";
 #elif defined(__x86_64__)
-        constexpr auto path = "zygisk/arm64-v8a.so";
+    path = "zygisk/arm64-v8a.so";
 #else
-        return;
+    return;
 #endif
-        int dirfd = api->getModuleDir();
-        int fd = openat(dirfd, path, O_RDONLY);
-        if (fd == -1) {
-            LOGW("arm bridge payload not found at %s", path);
-            return;
-        }
-        struct stat sb{};
-        fstat(fd, &sb);
-        bridge_length = static_cast<size_t>(sb.st_size);
-        bridge_data = mmap(nullptr, bridge_length, PROT_READ, MAP_PRIVATE, fd, 0);
-        close(fd);
+    int dirfd = api->getModuleDir();
+    int fd = openat(dirfd, path, O_RDONLY);
+    if (fd == -1) {
+        LOGW("arm bridge payload not found at %s", path);
+        return;
     }
+    struct stat sb{};
+    fstat(fd, &sb);
+    bridge_length = static_cast<size_t>(sb.st_size);
+    bridge_data = mmap(nullptr, bridge_length, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+}
 };
 
 REGISTER_ZYGISK_MODULE(EaquelDumperModule)

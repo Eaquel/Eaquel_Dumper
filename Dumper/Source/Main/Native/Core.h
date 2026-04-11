@@ -524,5 +524,3 @@ DO_API(void, il2cpp_set_default_thread_affinity, (int64_t affinity_mask))
 void hack_prepare(const char* game_data_dir, void* data, size_t length);
 void il2cpp_api_init(void* handle);
 void il2cpp_dump(const char* outDir);
-
-#endif
