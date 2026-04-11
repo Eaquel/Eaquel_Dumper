@@ -84,7 +84,7 @@ androidComponents {
                         "description" to moduleDescription
                     )
                 )
-                filter(FixCrLfFilter::class.java, "eol" to FixCrLfFilter.CrLf.newInstance("lf"))
+                filter(mapOf("eol" to FixCrLfFilter.CrLf.newInstance("lf")), FixCrLfFilter::class.java)
             }
             from(layout.buildDirectory.dir("intermediates/stripped_native_libs/$variantLower/stripDebugSymbols/out/lib")) {
                 into("lib")
@@ -113,20 +113,20 @@ androidComponents {
         tasks.register<Exec>("push$variantCapped") {
             dependsOn(zipTask)
             workingDir(outDir)
-            commandLine(android.adbExecutable, "push", zipFileName, "/data/local/tmp/")
+            commandLine("adb", "push", zipFileName, "/data/local/tmp/")
         }
 
         tasks.register<Exec>("flash$variantCapped") {
             dependsOn("push$variantCapped")
             commandLine(
-                android.adbExecutable, "shell", "su", "-c",
+                "adb", "shell", "su", "-c",
                 "magisk --install-module /data/local/tmp/$zipFileName"
             )
         }
 
         tasks.register<Exec>("flashAndReboot$variantCapped") {
             dependsOn("flash$variantCapped")
-            commandLine(android.adbExecutable, "shell", "reboot")
+            commandLine("adb", "shell", "reboot")
         }
     }
 }
