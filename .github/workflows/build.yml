@@ -49,8 +49,6 @@ jobs:
           VARIANT="${{ github.event.inputs.build_variant }}"
           VARIANT_CAPPED="$(echo ${VARIANT:0:1} | tr '[:lower:]' '[:upper:]')${VARIANT:1}"
           ./gradlew :Dumper:assemble${VARIANT_CAPPED} --no-daemon --stacktrace
-        env:
-          GRADLE_OPTS: "-Xmx4g -XX:+UseG1GC"
 
       - name: Upload module folder
         uses: actions/upload-artifact@v4
