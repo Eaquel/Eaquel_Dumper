@@ -3,7 +3,7 @@ import java.nio.file.Files
 import java.nio.file.Paths
 
 plugins {
-    alias(libs.plugins.android.library)
+    id("com.android.library")
 }
 
 val moduleLibraryName: String by project
@@ -18,11 +18,11 @@ val outDir: File by rootProject.extra
 
 android {
     namespace = "com.eaquel.dumper"
-    compileSdk = libs.versions.compileSdk.get().toInt()
-    ndkVersion = libs.versions.ndkVersion.get()
+    compileSdk = 36
+    ndkVersion = "29.0.14206865"
 
     defaultConfig {
-        minSdk = libs.versions.minSdk.get().toInt()
+        minSdk = 30
 
         externalNativeBuild {
             cmake {
@@ -43,7 +43,7 @@ android {
     externalNativeBuild {
         cmake {
             path = file("Source/Main/Native/CMakeLists.txt")
-            version = libs.versions.cmakeVersion.get()
+            version = "3.22.1"
         }
     }
 
@@ -56,7 +56,7 @@ android {
 }
 
 dependencies {
-    implementation(libs.xdl)
+    implementation("io.github.hexhacking:xdl:2.3.0")
 }
 
 androidComponents {
