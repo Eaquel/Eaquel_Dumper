@@ -23,6 +23,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "Eaquel_Dumper"
 include(":Dumper")
-
-import org.apache.tools.ant.DirectoryScanner
-DirectoryScanner.removeDefaultExclude("**/.gitattributes")
