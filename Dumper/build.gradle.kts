@@ -96,17 +96,17 @@ androidComponents {
                 )
                 filter(mapOf("eol" to FixCrLfFilter.CrLf.newInstance("lf")), FixCrLfFilter::class.java)
             }
-            from(layout.buildDirectory.dir("intermediates/stripped_native_libs/$variantLower/stripDebugSymbols/out/lib")) {
+            from(layout.buildDirectory.dir("intermediates/stripped_native_libs/$variantLower/strip${variantCapped}DebugSymbols/out/lib")) {
                 into("lib")
             }
 
             doLast {
                 skeletonZygiskDir.mkdirs()
-                skeletonLibDir.walkTopDown()
-                    .filter { it.isDirectory && it != skeletonLibDir }
-                    .forEach { abiDir ->
-                        val src = Paths.get("${abiDir.absolutePath}/lib${capturedLibraryName}.so")
-                        val dst = Paths.get("${skeletonZygiskDir.absolutePath}/${abiDir.name}.so")
+                skeletonLibDir.listFiles()
+                    ?.filter { it.isDirectory }
+                    ?.forEach { abiDir ->
+                        val src = Paths.get(abiDir.absolutePath + "/lib" + capturedLibraryName + ".so")
+                        val dst = Paths.get(skeletonZygiskDir.absolutePath + "/" + abiDir.name + ".so")
                         Files.createDirectories(dst.parent)
                         if (src.toFile().exists()) Files.move(src, dst)
                     }
