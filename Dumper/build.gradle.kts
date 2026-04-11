@@ -77,6 +77,7 @@ androidComponents {
         val capturedLibraryName = moduleLibraryName
 
         val prepareTask = tasks.register<Sync>("prepareSkeleton$variantCapped") {
+            dependsOn("strip${variantCapped}DebugSymbols")
             into(skeletonDir)
 
             from("$rootDir/Base") {
