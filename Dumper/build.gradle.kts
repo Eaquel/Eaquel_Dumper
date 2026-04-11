@@ -110,6 +110,10 @@ androidComponents {
             destinationDirectory.set(outDir)
         }
 
+        tasks.named("assemble$variantCapped") {
+            finalizedBy(zipTask)
+        }
+
         tasks.register<Exec>("push$variantCapped") {
             dependsOn(zipTask)
             workingDir(outDir)
@@ -127,15 +131,6 @@ androidComponents {
         tasks.register<Exec>("flashAndReboot$variantCapped") {
             dependsOn("flash$variantCapped")
             commandLine("adb", "shell", "reboot")
-        }
-    }
-}
-
-afterEvaluate {
-    androidComponents.onVariants { variant ->
-        val variantCapped = variant.name.replaceFirstChar { it.uppercase() }
-        tasks.named("assemble$variantCapped") {
-            finalizedBy("zip$variantCapped")
         }
     }
 }
