@@ -13,7 +13,7 @@ on:
           - debug
 
       output_dir:
-        description: "📂 Output Directory (on device) — written to eaquel_config.json"
+        description: "📂 Output Directory (on device)"
         required: false
         default: "/sdcard/Eaquel"
 
@@ -105,7 +105,7 @@ jobs:
         run: |
           VARIANT="${{ github.event.inputs.build_variant }}"
           sed -i \
-            "s|val moduleDescription by extra(\".*\")|val moduleDescription by extra(\"[${VARIANT}] Runtime IL2CPP binary resolver - JSON-config driven - API 30-36\")|" \
+            "s|val moduleDescription by extra(\".*\")|val moduleDescription by extra(\"[${VARIANT}] Runtime IL2CPP binary resolver - JSON-config driven - API 30-36.\")| " \
             module.gradle.kts
 
       - name: "🔑  Grant Gradlew Permissions"
@@ -126,7 +126,7 @@ jobs:
           name:              "eaquel-dumper-${{ github.event.inputs.build_variant }}-${{ github.run_number }}"
           path:              "out/*.zip"
           retention-days:    14
-          compression-level: 9
+          compression-level: 0
 
       - name: "📋  Build Summary"
         run: |
@@ -143,8 +143,4 @@ jobs:
           echo "| Frida Script        | \`${{ github.event.inputs.generate_frida_script }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Run Number          | \`#${{ github.run_number }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> target_package is blank by design." >> $GITHUB_STEP_SUMMARY
-          echo "> Set it at runtime via Kitsune WebUI or:" >> $GITHUB_STEP_SUMMARY
-          echo "> \`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "> adb push eaquel_config.json /data/local/tmp/" >> $GITHUB_STEP_SUMMARY
-          echo "> \`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "> target_package is blank by design — set at runtime via WebUI or adb push." >> $GITHUB_STEP_SUMMARY

@@ -1,26 +1,23 @@
 import org.apache.tools.ant.filters.FixCrLfFilter
 import java.nio.file.Files
 import java.nio.file.Paths
-import java.util.zip.ZipOutputStream
-import java.util.zip.ZipEntry
-import java.io.FileOutputStream
 
 plugins {
     id("com.android.library")
 }
 
-val moduleLibraryName:  String by rootProject.extra
-val magiskModuleId:     String by rootProject.extra
-val moduleName:         String by rootProject.extra
-val moduleAuthor:       String by rootProject.extra
-val moduleDescription:  String by rootProject.extra
-val moduleVersion:      String by rootProject.extra
-val moduleVersionCode:  String by rootProject.extra
+val moduleLibraryName: String by rootProject.extra
+val magiskModuleId: String by rootProject.extra
+val moduleName: String by rootProject.extra
+val moduleAuthor: String by rootProject.extra
+val moduleDescription: String by rootProject.extra
+val moduleVersion: String by rootProject.extra
+val moduleVersionCode: String by rootProject.extra
 
 val outDir: File by rootProject.extra
 
 android {
-    namespace  = "com.eaquel.dumper"
+    namespace = "com.eaquel.dumper"
     compileSdk = 36
     ndkVersion = "29.0.14206865"
 
@@ -31,23 +28,10 @@ android {
             cmake {
                 arguments(
                     "-DMODULE_NAME:STRING=$moduleLibraryName",
-                    // 16 KB page-size support (required for Android 15+ devices)
                     "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
                     "-DCMAKE_BUILD_TYPE=Release"
                 )
-                cppFlags(
-                    "-std=c++23",
-                    "-O3",
-                    "-fvisibility=hidden",
-                    "-fvisibility-inlines-hidden",
-                    // Thin LTO: fast incremental, good inlining across TU
-                    "-flto=thin",
-                    "-ffunction-sections",
-                    "-fdata-sections",
-                    // Crash safety
-                    "-fstack-protector-strong",
-                    "-D_FORTIFY_SOURCE=2"
-                )
+                cppFlags("-std=c++20", "-O3", "-fvisibility=hidden", "-flto")
             }
         }
     }
@@ -55,10 +39,6 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-        }
-        debug {
-            isMinifyEnabled  = false
-            isJniDebuggable  = true
         }
     }
 
@@ -68,7 +48,7 @@ android {
 
     externalNativeBuild {
         cmake {
-            path    = file("Source/Main/Native/CMakeLists.txt")
+            path = file("Source/Main/Native/CMakeLists.txt")
             version = "3.22.1"
         }
     }
@@ -76,7 +56,7 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = false
-            pickFirsts        += "**/libxdl.so"
+            pickFirsts += "**/libxdl.so"
         }
     }
 }
@@ -87,46 +67,37 @@ dependencies {
 
 androidComponents {
     onVariants { variant ->
-        val variantCapped       = variant.name.replaceFirstChar { it.uppercase() }
-        val variantLower        = variant.name.lowercase()
-        val zipFileName         = "${magiskModuleId.replace('_', '-')}-${moduleVersion}-${variantLower}.zip"
-        val skeletonDir         = file("$outDir/skeleton_$variantLower")
-        val skeletonLibDir      = skeletonDir.resolve("lib")
-        val skeletonZygiskDir   = skeletonDir.resolve("zygisk")
-        val capturedLibName     = moduleLibraryName
-        val capturedOutDir      = outDir.absolutePath
-        val capturedRootDir     = rootDir.absolutePath
+        val variantCapped = variant.name.replaceFirstChar { it.uppercase() }
+        val variantLower = variant.name.lowercase()
+        val zipFileName = "${magiskModuleId.replace('_', '-')}-${moduleVersion}-${variantLower}.zip"
+        val skeletonDir = file("$outDir/skeleton_$variantLower")
+
+        val skeletonLibDir = skeletonDir.resolve("lib")
+        val skeletonZygiskDir = skeletonDir.resolve("zygisk")
+        val capturedLibraryName = moduleLibraryName
 
         val prepareTask = tasks.register<Sync>("prepareSkeleton$variantCapped") {
             dependsOn("strip${variantCapped}DebugSymbols")
             into(skeletonDir)
 
-            from("$capturedRootDir/Base") {
+            from("$rootDir/Base") {
                 exclude("module.prop")
             }
-            from("$capturedRootDir/Base") {
+            from("$rootDir/Base") {
                 include("module.prop")
                 expand(
                     mapOf(
-                        "id"          to magiskModuleId,
-                        "name"        to moduleName,
-                        "version"     to moduleVersion,
+                        "id" to magiskModuleId,
+                        "name" to moduleName,
+                        "version" to moduleVersion,
                         "versionCode" to moduleVersionCode,
-                        "author"      to moduleAuthor,
+                        "author" to moduleAuthor,
                         "description" to moduleDescription
                     )
                 )
-                filter(
-                    mapOf("eol" to FixCrLfFilter.CrLf.newInstance("lf")),
-                    FixCrLfFilter::class.java
-                )
+                filter(mapOf("eol" to FixCrLfFilter.CrLf.newInstance("lf")), FixCrLfFilter::class.java)
             }
-            from(
-                layout.buildDirectory.dir(
-                    "intermediates/stripped_native_libs/$variantLower/" +
-                    "strip${variantCapped}DebugSymbols/out/lib"
-                )
-            ) {
+            from(layout.buildDirectory.dir("intermediates/stripped_native_libs/$variantLower/strip${variantCapped}DebugSymbols/out/lib")) {
                 into("lib")
             }
 
@@ -135,8 +106,8 @@ androidComponents {
                 skeletonLibDir.listFiles()
                     ?.filter { it.isDirectory }
                     ?.forEach { abiDir ->
-                        val src = Paths.get("${abiDir.absolutePath}/lib${capturedLibName}.so")
-                        val dst = Paths.get("${skeletonZygiskDir.absolutePath}/${abiDir.name}.so")
+                        val src = Paths.get(abiDir.absolutePath + "/lib" + capturedLibraryName + ".so")
+                        val dst = Paths.get(skeletonZygiskDir.absolutePath + "/" + abiDir.name + ".so")
                         Files.createDirectories(dst.parent)
                         if (src.toFile().exists()) Files.move(src, dst)
                     }
@@ -146,54 +117,21 @@ androidComponents {
 
         val zipTask = tasks.register<Zip>("zip$variantCapped") {
             dependsOn(prepareTask)
-            from(skeletonDir)
+            from(skeletonDir) {
+                exclude("**/*.zip")
+            }
             archiveFileName.set(zipFileName)
             destinationDirectory.set(outDir)
-
-            doLast {
-                val targetZip = File("$capturedOutDir/$zipFileName")
-                ZipOutputStream(FileOutputStream(targetZip, true)).use { zipOut ->
-
-                    // Bundle eaquel_config.json if present
-                    val configSource = File("$capturedRootDir/eaquel_config.json")
-                    if (configSource.exists()) {
-                        zipOut.putNextEntry(ZipEntry("eaquel_config.json"))
-                        configSource.inputStream().use { it.copyTo(zipOut) }
-                        zipOut.closeEntry()
-                        println("Bundled eaquel_config.json → $zipFileName")
-                    }
-
-                    // Bundle the WebUI (index.html) so KernelSU/MMRL can serve it
-                    val webUi = File("$capturedRootDir/webroot/index.html")
-                    if (webUi.exists()) {
-                        zipOut.putNextEntry(ZipEntry("webroot/index.html"))
-                        webUi.inputStream().use { it.copyTo(zipOut) }
-                        zipOut.closeEntry()
-                        println("Bundled webroot/index.html → $zipFileName")
-                    }
-                }
-            }
         }
 
         tasks.matching { it.name == "assemble$variantCapped" }.configureEach {
             finalizedBy(zipTask)
         }
 
-        // ── ADB convenience tasks ──────────────────────────────────────────
         tasks.register<Exec>("push$variantCapped") {
             dependsOn(zipTask)
             workingDir(outDir)
             commandLine("adb", "push", zipFileName, "/data/local/tmp/")
-        }
-
-        tasks.register<Exec>("pushConfig$variantCapped") {
-            description = "Push eaquel_config.json to /data/local/tmp/ on device"
-            workingDir(File(capturedRootDir))
-            commandLine(
-                "adb", "push",
-                "eaquel_config.json",
-                "/data/local/tmp/eaquel_config.json"
-            )
         }
 
         tasks.register<Exec>("flash$variantCapped") {
@@ -206,13 +144,6 @@ androidComponents {
 
         tasks.register<Exec>("flashAndReboot$variantCapped") {
             dependsOn("flash$variantCapped")
-            commandLine("adb", "shell", "reboot")
-        }
-
-        // Full deploy: flash module + push config, then reboot
-        tasks.register<Exec>("deployFull$variantCapped") {
-            dependsOn("flash$variantCapped", "pushConfig$variantCapped")
-            description = "Flash module + push config, then reboot"
             commandLine("adb", "shell", "reboot")
         }
     }
