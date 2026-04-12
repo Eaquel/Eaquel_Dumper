@@ -569,7 +569,7 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
     };
 
     if (!tryDir(out_dir)) {
-        LOGW("primary output dir unavailable: %s", out_dir.c_str());
+        LOGW("primary output dir unavailable: %s", out_dir);
         if (!tryDir("/data/local/tmp/eaquel_out")) {
             if (!tryDir("/data/local/tmp")) {
                 LOGE("runDump: no writable output dir found, aborting");
