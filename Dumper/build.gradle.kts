@@ -1,6 +1,9 @@
 import org.apache.tools.ant.filters.FixCrLfFilter
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.util.zip.ZipOutputStream
+import java.util.zip.ZipEntry
+import java.io.FileOutputStream
 
 plugins {
     id("com.android.library")
@@ -49,8 +52,8 @@ android {
             isMinifyEnabled = false
         }
         debug {
-            isMinifyEnabled    = false
-            isJniDebuggable    = true
+            isMinifyEnabled  = false
+            isJniDebuggable  = true
         }
     }
 
@@ -79,11 +82,11 @@ dependencies {
 
 androidComponents {
     onVariants { variant ->
-        val variantCapped  = variant.name.replaceFirstChar { it.uppercase() }
-        val variantLower   = variant.name.lowercase()
-        val zipFileName    = "${magiskModuleId.replace('_', '-')}-${moduleVersion}-${variantLower}.zip"
-        val skeletonDir    = file("$outDir/skeleton_$variantLower")
-        val skeletonLibDir = skeletonDir.resolve("lib")
+        val variantCapped     = variant.name.replaceFirstChar { it.uppercase() }
+        val variantLower      = variant.name.lowercase()
+        val zipFileName       = "${magiskModuleId.replace('_', '-')}-${moduleVersion}-${variantLower}.zip"
+        val skeletonDir       = file("$outDir/skeleton_$variantLower")
+        val skeletonLibDir    = skeletonDir.resolve("lib")
         val skeletonZygiskDir = skeletonDir.resolve("zygisk")
         val capturedLibraryName = moduleLibraryName
 
@@ -143,17 +146,14 @@ androidComponents {
             doLast {
                 val configSource = rootProject.file("eaquel_config.json")
                 if (configSource.exists()) {
-                    val zipFile = java.util.zip.ZipOutputStream(
-                        java.io.FileOutputStream(
-                            file("$outDir/$zipFileName"),
-                            true
-                        )
+                    val zipOut = ZipOutputStream(
+                        FileOutputStream(file("$outDir/$zipFileName"), true)
                     )
-                    zipFile.putNextEntry(java.util.zip.ZipEntry("eaquel_config.json"))
-                    configSource.inputStream().copyTo(zipFile)
-                    zipFile.closeEntry()
-                    zipFile.close()
-                    println("✅  eaquel_config.json bundled into $zipFileName")
+                    zipOut.putNextEntry(ZipEntry("eaquel_config.json"))
+                    configSource.inputStream().copyTo(zipOut)
+                    zipOut.closeEntry()
+                    zipOut.close()
+                    println("eaquel_config.json bundled into $zipFileName")
                 }
             }
         }
