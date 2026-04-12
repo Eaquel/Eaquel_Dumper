@@ -82,22 +82,24 @@ dependencies {
 
 androidComponents {
     onVariants { variant ->
-        val variantCapped     = variant.name.replaceFirstChar { it.uppercase() }
-        val variantLower      = variant.name.lowercase()
-        val zipFileName       = "${magiskModuleId.replace('_', '-')}-${moduleVersion}-${variantLower}.zip"
-        val skeletonDir       = file("$outDir/skeleton_$variantLower")
-        val skeletonLibDir    = skeletonDir.resolve("lib")
-        val skeletonZygiskDir = skeletonDir.resolve("zygisk")
-        val capturedLibraryName = moduleLibraryName
+        val variantCapped       = variant.name.replaceFirstChar { it.uppercase() }
+        val variantLower        = variant.name.lowercase()
+        val zipFileName         = "${magiskModuleId.replace('_', '-')}-${moduleVersion}-${variantLower}.zip"
+        val skeletonDir         = file("$outDir/skeleton_$variantLower")
+        val skeletonLibDir      = skeletonDir.resolve("lib")
+        val skeletonZygiskDir   = skeletonDir.resolve("zygisk")
+        val capturedLibName     = moduleLibraryName
+        val capturedOutDir      = outDir.absolutePath
+        val capturedRootDir     = rootDir.absolutePath
 
         val prepareTask = tasks.register<Sync>("prepareSkeleton$variantCapped") {
             dependsOn("strip${variantCapped}DebugSymbols")
             into(skeletonDir)
 
-            from("$rootDir/Base") {
+            from("$capturedRootDir/Base") {
                 exclude("module.prop")
             }
-            from("$rootDir/Base") {
+            from("$capturedRootDir/Base") {
                 include("module.prop")
                 expand(
                     mapOf(
@@ -128,7 +130,7 @@ androidComponents {
                 skeletonLibDir.listFiles()
                     ?.filter { it.isDirectory }
                     ?.forEach { abiDir ->
-                        val src = Paths.get("${abiDir.absolutePath}/lib${capturedLibraryName}.so")
+                        val src = Paths.get("${abiDir.absolutePath}/lib${capturedLibName}.so")
                         val dst = Paths.get("${skeletonZygiskDir.absolutePath}/${abiDir.name}.so")
                         Files.createDirectories(dst.parent)
                         if (src.toFile().exists()) Files.move(src, dst)
@@ -144,13 +146,12 @@ androidComponents {
             destinationDirectory.set(outDir)
 
             doLast {
-                val configSource = rootProject.file("eaquel_config.json")
+                val configSource = File("$capturedRootDir/eaquel_config.json")
                 if (configSource.exists()) {
-                    val zipOut = ZipOutputStream(
-                        FileOutputStream(file("$outDir/$zipFileName"), true)
-                    )
+                    val targetZip = File("$capturedOutDir/$zipFileName")
+                    val zipOut = ZipOutputStream(FileOutputStream(targetZip, true))
                     zipOut.putNextEntry(ZipEntry("eaquel_config.json"))
-                    configSource.inputStream().copyTo(zipOut)
+                    configSource.inputStream().use { it.copyTo(zipOut) }
                     zipOut.closeEntry()
                     zipOut.close()
                     println("eaquel_config.json bundled into $zipFileName")
@@ -171,7 +172,7 @@ androidComponents {
         tasks.register<Exec>("pushConfig$variantCapped") {
             dependsOn(zipTask)
             description = "Push eaquel_config.json to /data/local/tmp/ on device"
-            workingDir(rootProject.projectDir)
+            workingDir(File(capturedRootDir))
             commandLine(
                 "adb", "push",
                 "eaquel_config.json",
