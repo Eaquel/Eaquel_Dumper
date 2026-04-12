@@ -433,11 +433,12 @@ namespace output {
 static bool ensureDirectory(const char* dir) {
     struct stat st{};
     if (stat(dir, &st) == 0) return S_ISDIR(st.st_mode);
-    // Try to create, including /sdcard paths that may need shell mkdir
-    if (mkdir(dir, 0755) == 0) { LOGI("created output dir: %s", dir); return true; }
-    // Fallback: try via /proc/self/exe shell (shouldn't be needed with root)
-    LOGE("failed to create dir: %s (errno=%d)", dir, errno);
-    // Last resort: use /data/local/tmp
+    if (mkdir(dir, 0777) == 0) {
+        chmod(dir, 0777);
+        LOGI("created output dir: %s", dir);
+        return true;
+    }
+    LOGE("mkdir failed: %s (errno=%d)", dir, errno);
     return false;
 }
 
@@ -561,14 +562,22 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
 
     // ── CRASH FIX: try primary dir, fall back to /data/local/tmp ──
     std::string effective_dir = out_dir;
-    if (!output::ensureDirectory(out_dir)) {
-        LOGW("output dir unavailable, falling back to /data/local/tmp");
-        effective_dir = "/data/local/tmp";
-        if (!output::ensureDirectory(effective_dir.c_str())) {
-            LOGE("runDump: cannot create any output dir, aborting");
-            return;
+
+    auto tryDir = [&](const std::string& d) -> bool {
+        if (output::ensureDirectory(d.c_str())) { effective_dir = d; return true; }
+        return false;
+    };
+
+    if (!tryDir(out_dir)) {
+        LOGW("primary output dir unavailable: %s", out_dir.c_str());
+        if (!tryDir("/data/local/tmp/eaquel_out")) {
+            if (!tryDir("/data/local/tmp")) {
+                LOGE("runDump: no writable output dir found, aborting");
+                return;
+            }
         }
     }
+    LOGI("runDump: using output dir: %s", effective_dir.c_str());
     const char* dir = effective_dir.c_str();
 
     size_t ac    = 0;
@@ -879,6 +888,7 @@ private:
 
     void preSpecialize(const char* pkg, const char* app_data_dir) {
         active_cfg = config::loadConfig();
+        LOGI("preSpecialize: pkg=%s cfg_target=%s", pkg, active_cfg.target_package.c_str());
         if (!config::isTargetPackage(active_cfg, pkg)) {
             api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
             return;
@@ -886,8 +896,10 @@ private:
         LOGI("target detected: %s", pkg);
         enable_hack = true;
         game_dir    = app_data_dir;
-        out_dir     = active_cfg.output_dir;
-        if (out_dir.empty()) out_dir = std::string(config::kFallbackOutput);
+        out_dir     = active_cfg.output_dir.empty()
+                      ? std::string(config::kFallbackOutput)
+                      : active_cfg.output_dir;
+        LOGI("output dir: %s", out_dir.c_str());
 #if defined(__i386__) || defined(__x86_64__)
         loadArmBridgePayload();
 #endif

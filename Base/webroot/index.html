@@ -1166,19 +1166,45 @@ const Core = {
     this.switchTab("term");
     Terminal.log(`Preparing Zygisk injection for ${pkg}...`, "sys");
 
-    if (AppState.config.target_package !== pkg) {
-      AppState.config.target_package = pkg;
-      // Build JSON and write via printf — godRun handles su -c wrapping
-      const json = JSON.stringify(AppState.config, null, 2).replace(/'/g, "'\\''");
-      await Bridge.godRun(`printf '%s' '${json}' > ${CONFIG_PATH} && chmod 644 ${CONFIG_PATH}`);
-      Terminal.log("Config updated with target package.", "cfg");
+    AppState.config.target_package = pkg;
+    const json = JSON.stringify(AppState.config, null, 2).replace(/'/g, "'\\''");
+    const cfgResult = await Bridge.godRun(
+      `printf '%s' '${json}' > ${CONFIG_PATH} && chmod 644 ${CONFIG_PATH} && echo OK`
+    );
+    if (!cfgResult.includes("OK")) {
+      Terminal.log("Config write failed — check root access.", "err");
+      return;
     }
+    Terminal.log(`Config written → ${CONFIG_PATH}`, "cfg");
+
+    const outDir = AppState.config.output_dir || "/data/local/tmp/eaquel_out";
+    await Bridge.godRun(`mkdir -p "${outDir}" && chmod 777 "${outDir}"`);
+    Terminal.log(`Output dir ready: ${outDir}`, "cfg");
 
     await Bridge.godRun(`am force-stop "${pkg}"`);
     Terminal.log(`Force-stopped ${pkg}.`, "sys");
-    await new Promise(r => setTimeout(r, 600));
-    await Bridge.godRun(`monkey -p "${pkg}" -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1`);
-    Terminal.log("App relaunched — Zygisk hooks on next attach.", "ok");
+    await new Promise(r => setTimeout(r, 800));
+
+    const launchResult = await Bridge.godRun(
+      `monkey -p "${pkg}" -c android.intent.category.LAUNCHER 1 2>&1`
+    );
+    if (launchResult.includes("No activities found")) {
+      await Bridge.godRun(
+        `am start -n "$(pm dump ${pkg} | grep 'android.intent.action.MAIN' -A1 | grep 'Activity' | head -1 | awk '{print $2}')" 2>&1`
+      );
+    }
+    Terminal.log("App launched — Zygisk hooks active on next process fork.", "ok");
+    Terminal.log("Waiting for dump (~10-30s depending on game size)...", "sys");
+
+    await new Promise(r => setTimeout(r, 3000));
+    const checkResult = await Bridge.godRun(
+      `[ -f "${outDir}/dump.cs" ] && echo FOUND || echo WAIT`
+    );
+    if (checkResult.includes("FOUND")) {
+      Terminal.log("dump.cs detected! Use Extract tab to pull files.", "ok");
+    } else {
+      Terminal.log("Dump not yet ready — check Terminal for [ZYGISK] logs.", "sys");
+    }
   },
 
   async killApp() {
@@ -1192,22 +1218,30 @@ const Core = {
     const pkg = AppState.target;
     if (!pkg) { this.switchTab("target"); alert("Select a target app first!"); return; }
     this.switchTab("term");
-    const outDir = AppState.config.output_dir || "/sdcard/Eaquel";
-    const src    = `${outDir}/${fileName}`;
-    const dest   = `/sdcard/Download/EaquelDumps`;
-    Terminal.log(`Pulling ${fileName} from ${outDir}...`, "sys");
-    const cmd = `
-      if [ -f "${src}" ]; then
-        mkdir -p ${dest}
-        cp "${src}" "${dest}/${pkg}_${fileName}"
-        chmod 644 "${dest}/${pkg}_${fileName}"
-        echo "[OK] ${dest}/${pkg}_${fileName}"
-      else
-        echo "[ERR] Not found: ${src}"
-      fi
-    `;
-    const res = await Bridge.godRun(cmd);
-    Terminal.log(res.trim(), res.includes("[ERR]") ? "err" : "ok");
+
+    const primaryDir = AppState.config.output_dir || "/sdcard/Eaquel";
+    const fallbackDirs = [primaryDir, "/data/local/tmp/eaquel_out", "/data/local/tmp"];
+    const dest = `/sdcard/Download/EaquelDumps`;
+
+    Terminal.log(`Looking for ${fileName}...`, "sys");
+
+    let found = false;
+    for (const dir of fallbackDirs) {
+      const checkCmd = `[ -f "${dir}/${fileName}" ] && echo YES || echo NO`;
+      const check = await Bridge.godRun(checkCmd);
+      if (check.includes("YES")) {
+        const copyCmd = `mkdir -p ${dest} && cp "${dir}/${fileName}" "${dest}/${pkg}_${fileName}" && chmod 644 "${dest}/${pkg}_${fileName}" && echo "[OK] ${dest}/${pkg}_${fileName}"`;
+        const res = await Bridge.godRun(copyCmd);
+        Terminal.log(res.trim() || `[OK] Copied from ${dir}`, "ok");
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      Terminal.log(`[ERR] ${fileName} not found in any output dir.`, "err");
+      Terminal.log(`Checked: ${fallbackDirs.join(", ")}`, "data");
+      Terminal.log("Inject the target app first and wait for dump to complete.", "sys");
+    }
   },
 
   async pullAll() {
@@ -1359,13 +1393,24 @@ const Core = {
 };
 
 // ── LOGCAT POLLER ──────────────────────────────────────────────────────────
+let _lastLogLines = new Set();
 setInterval(async () => {
   if (!AppState.root) return;
-  const out = await Bridge.godRun("logcat -d -s Eaquel:V | tail -n 5 && logcat -c -s Eaquel:V");
-  if (out && out.length > 5 && !out.includes("not found")) {
-    out.trim().split("\n").forEach(line => Terminal.log(`[ZYGISK] ${line.trim()}`, "zg"));
-  }
-}, 3000);
+  const out = await Bridge.godRun("logcat -d -s Eaquel:* 2>/dev/null | tail -n 20");
+  if (!out || out.length < 5 || out.includes("not found")) return;
+  const lines = out.trim().split("\n").filter(l => l.includes("Eaquel"));
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed || _lastLogLines.has(trimmed)) return;
+    _lastLogLines.add(trimmed);
+    if (_lastLogLines.size > 200) _lastLogLines = new Set([..._lastLogLines].slice(-100));
+    const level = trimmed.includes("E Eaquel") ? "err" : trimmed.includes("W Eaquel") ? "sys" : "zg";
+    Terminal.log(`[ZYGISK] ${trimmed}`, level);
+    if (trimmed.includes("dump.cs written")) {
+      Terminal.log("Dump complete! Go to Extract tab to pull files.", "ok");
+    }
+  });
+}, 2000);
 
 window.onload = () => Core.boot();
 </script>
