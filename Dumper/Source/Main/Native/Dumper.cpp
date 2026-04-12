@@ -25,6 +25,13 @@
 #include <array>
 #include <xdl.h>
 
+// ── Safe string helpers ────────────────────────────────────────────────────
+// All il2cpp string getters can return nullptr on stripped/obfuscated builds.
+// These wrappers guarantee a valid C string is always returned.
+static inline const char* safeStr(const char* s, const char* fallback = "") {
+    return (s && *s) ? s : fallback;
+}
+
 namespace il2cpp_api {
 
 struct FunctionTable {
@@ -150,7 +157,11 @@ static void populateFunctionTable(void* handle) {
     }
 }
 
-}
+} // namespace il2cpp_api
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Method/field/type stringification
+// ─────────────────────────────────────────────────────────────────────────────
 
 static std::string buildMethodModifier(uint32_t flags) {
     std::stringstream out;
@@ -193,28 +204,51 @@ struct MethodEntry {
     std::vector<std::pair<std::string, std::string>> params;
 };
 
-static std::vector<MethodEntry> collectMethods(Il2CppClass* klass) {
+// ── CRASH FIX: every class/type getter guarded with null checks ──
+static std::string safeClassName(Il2CppClass* klass) {
+    if (!klass) return "object";
     auto& api = il2cpp_api::g_api;
+    auto name = api.class_get_name ? api.class_get_name(klass) : nullptr;
+    return safeStr(name, "object");
+}
+
+static std::vector<MethodEntry> collectMethods(Il2CppClass* klass) {
+    if (!klass) return {};
+    auto& api = il2cpp_api::g_api;
+    if (!api.class_get_methods) return {};
     std::vector<MethodEntry> entries;
     void* iter = nullptr;
     while (auto method = api.class_get_methods(klass, &iter)) {
+        if (!method) continue;
         MethodEntry e;
         e.va  = method->methodPointer ? reinterpret_cast<uint64_t>(method->methodPointer) : 0;
         e.rva = (e.va && il2cpp_api::g_il2cpp_base) ? (e.va - il2cpp_api::g_il2cpp_base) : 0;
         uint32_t iflags = 0;
-        e.modifier    = buildMethodModifier(api.method_get_flags(method, &iflags));
-        e.name        = api.method_get_name(method) ? api.method_get_name(method) : "";
-        auto ret      = api.method_get_return_type(method);
-        e.return_type = api.class_get_name(api.class_from_type(ret));
-        auto pc = api.method_get_param_count(method);
+        if (api.method_get_flags)
+            e.modifier = buildMethodModifier(api.method_get_flags(method, &iflags));
+        if (api.method_get_name)
+            e.name = safeStr(api.method_get_name(method));
+        if (e.name.empty()) continue; // skip unnamed methods
+
+        if (api.method_get_return_type && api.class_from_type) {
+            auto ret = api.method_get_return_type(method);
+            if (ret) e.return_type = safeClassName(api.class_from_type(ret));
+        }
+        if (e.return_type.empty()) e.return_type = "void";
+
+        auto pc = (api.method_get_param_count) ? api.method_get_param_count(method) : 0u;
         for (uint32_t i = 0; i < pc; ++i) {
-            auto param = api.method_get_param(method, i);
-            auto pname = api.method_get_param_name(method, i);
-            auto tname = api.class_get_name(api.class_from_type(param));
-            e.params.emplace_back(
-                tname ? tname : "object",
-                pname ? pname : ("p" + std::to_string(i))
-            );
+            std::string tname = "object";
+            std::string pname = "p" + std::to_string(i);
+            if (api.method_get_param && api.class_from_type) {
+                auto param = api.method_get_param(method, i);
+                if (param) tname = safeClassName(api.class_from_type(param));
+            }
+            if (api.method_get_param_name) {
+                auto pn = api.method_get_param_name(method, i);
+                if (pn && *pn) pname = pn;
+            }
+            e.params.emplace_back(std::move(tname), std::move(pname));
         }
         entries.push_back(std::move(e));
     }
@@ -241,31 +275,37 @@ static std::string dumpMethods(Il2CppClass* klass) {
 }
 
 static std::string dumpProperties(Il2CppClass* klass) {
+    if (!klass) return {};
     auto& api = il2cpp_api::g_api;
+    if (!api.class_get_properties) return {};
     std::stringstream out;
     out << "\n\t// Properties\n";
     void* iter = nullptr;
     while (auto pc = api.class_get_properties(klass, &iter)) {
         auto prop  = const_cast<PropertyInfo*>(pc);
-        auto get_m = api.property_get_get_method(prop);
-        auto set_m = api.property_get_set_method(prop);
-        auto pname = api.property_get_name(prop);
+        if (!prop) continue;
+        auto get_m = api.property_get_get_method ? api.property_get_get_method(prop) : nullptr;
+        auto set_m = api.property_get_set_method ? api.property_get_set_method(prop) : nullptr;
+        auto pname = api.property_get_name       ? api.property_get_name(prop)       : nullptr;
+        if (!pname || !*pname) continue;
         out << "\t";
         Il2CppClass* prop_class = nullptr;
         uint32_t iflags = 0;
-        if (get_m) {
+        if (get_m && api.method_get_flags && api.method_get_return_type && api.class_from_type) {
             out << buildMethodModifier(api.method_get_flags(get_m, &iflags));
-            prop_class = api.class_from_type(api.method_get_return_type(get_m));
-        } else if (set_m) {
+            auto rt = api.method_get_return_type(get_m);
+            if (rt) prop_class = api.class_from_type(rt);
+        } else if (set_m && api.method_get_flags && api.method_get_param && api.class_from_type) {
             out << buildMethodModifier(api.method_get_flags(set_m, &iflags));
-            prop_class = api.class_from_type(api.method_get_param(set_m, 0));
+            auto pt = api.method_get_param(set_m, 0);
+            if (pt) prop_class = api.class_from_type(pt);
         }
         if (prop_class) {
-            out << api.class_get_name(prop_class) << " " << pname << " { ";
+            out << safeClassName(prop_class) << " " << pname << " { ";
             if (get_m) out << "get; ";
             if (set_m) out << "set; ";
             out << "}\n";
-        } else if (pname) {
+        } else {
             out << " // unknown property " << pname << "\n";
         }
     }
@@ -273,14 +313,17 @@ static std::string dumpProperties(Il2CppClass* klass) {
 }
 
 static std::string dumpFields(Il2CppClass* klass) {
+    if (!klass) return {};
     auto& api    = il2cpp_api::g_api;
-    auto is_enum = api.class_is_enum(klass);
+    if (!api.class_get_fields) return {};
+    auto is_enum = api.class_is_enum ? api.class_is_enum(klass) : false;
     std::stringstream out;
     out << "\n\t// Fields\n";
     void* iter = nullptr;
     while (auto field = api.class_get_fields(klass, &iter)) {
+        if (!field) continue;
         out << "\t";
-        auto attrs = api.field_get_flags(field);
+        auto attrs = api.field_get_flags ? api.field_get_flags(field) : 0;
         switch (attrs & FIELD_ATTRIBUTE_FIELD_ACCESS_MASK) {
             case FIELD_ATTRIBUTE_PRIVATE:       out << "private ";            break;
             case FIELD_ATTRIBUTE_PUBLIC:        out << "public ";             break;
@@ -296,27 +339,44 @@ static std::string dumpFields(Il2CppClass* klass) {
             if (attrs & FIELD_ATTRIBUTE_STATIC)    out << "static ";
             if (attrs & FIELD_ATTRIBUTE_INIT_ONLY) out << "readonly ";
         }
-        auto fc = api.class_from_type(api.field_get_type(field));
-        out << api.class_get_name(fc) << " " << api.field_get_name(field);
-        if ((attrs & FIELD_ATTRIBUTE_LITERAL) && is_enum) {
+        std::string fname = "unknown_field";
+        std::string ftype = "object";
+        if (api.field_get_name) { auto n = api.field_get_name(field); if (n && *n) fname = n; }
+        if (api.field_get_type && api.class_from_type) {
+            auto ft = api.field_get_type(field);
+            if (ft) ftype = safeClassName(api.class_from_type(ft));
+        }
+        out << ftype << " " << fname;
+        if ((attrs & FIELD_ATTRIBUTE_LITERAL) && is_enum && api.field_static_get_value) {
             uint64_t val = 0;
             api.field_static_get_value(field, &val);
             out << " = " << std::dec << val;
         }
-        out << "; // 0x" << std::hex << api.field_get_offset(field) << "\n";
+        size_t offset = api.field_get_offset ? api.field_get_offset(field) : 0;
+        out << "; // 0x" << std::hex << offset << "\n";
     }
     return out.str();
 }
 
 static std::string dumpType(const Il2CppType* type) {
-    auto& api        = il2cpp_api::g_api;
-    auto  klass      = api.class_from_type(type);
-    auto  flags      = api.class_get_flags(klass);
-    auto  is_vt      = api.class_is_valuetype(klass);
-    auto  is_enum    = api.class_is_enum(klass);
+    if (!type) return {};
+    auto& api = il2cpp_api::g_api;
+    if (!api.class_from_type) return {};
+    auto klass = api.class_from_type(type);
+    if (!klass) return {};
+
+    auto  flags      = api.class_get_flags      ? api.class_get_flags(klass)      : 0;
+    auto  is_vt      = api.class_is_valuetype   ? api.class_is_valuetype(klass)   : false;
+    auto  is_enum    = api.class_is_enum        ? api.class_is_enum(klass)        : false;
+    auto  is_iface   = api.class_is_interface   ? api.class_is_interface(klass)   : false;
+    auto  is_abstract= api.class_is_abstract    ? api.class_is_abstract(klass)    : false;
+    auto  ns         = api.class_get_namespace  ? safeStr(api.class_get_namespace(klass)) : "";
+    auto  cn         = api.class_get_name       ? safeStr(api.class_get_name(klass), "UnknownClass") : "UnknownClass";
+
     std::stringstream out;
-    out << "\n// Namespace: " << api.class_get_namespace(klass) << "\n";
+    out << "\n// Namespace: " << ns << "\n";
     if (flags & TYPE_ATTRIBUTE_SERIALIZABLE) out << "[Serializable]\n";
+
     switch (flags & TYPE_ATTRIBUTE_VISIBILITY_MASK) {
         case TYPE_ATTRIBUTE_PUBLIC:
         case TYPE_ATTRIBUTE_NESTED_PUBLIC:        out << "public ";             break;
@@ -328,33 +388,33 @@ static std::string dumpType(const Il2CppType* type) {
         case TYPE_ATTRIBUTE_NESTED_FAM_OR_ASSEM:  out << "protected internal "; break;
         default: break;
     }
+
     if ((flags & TYPE_ATTRIBUTE_ABSTRACT) && (flags & TYPE_ATTRIBUTE_SEALED)) {
         out << "static ";
-    } else if (!(flags & TYPE_ATTRIBUTE_INTERFACE) && (flags & TYPE_ATTRIBUTE_ABSTRACT)) {
+    } else if (!is_iface && is_abstract) {
         out << "abstract ";
-    } else if (!is_vt && !is_enum && (flags & TYPE_ATTRIBUTE_SEALED)) {
+    } else if (flags & TYPE_ATTRIBUTE_SEALED) {
         out << "sealed ";
     }
-    if (flags & TYPE_ATTRIBUTE_INTERFACE) out << "interface ";
-    else if (is_enum)                     out << "enum ";
-    else if (is_vt)                       out << "struct ";
-    else                                  out << "class ";
-    out << api.class_get_name(klass);
-    std::vector<std::string> extends;
-    auto parent = api.class_get_parent(klass);
-    if (!is_vt && !is_enum && parent) {
-        auto pt = api.class_get_type(parent);
-        if (pt->type != IL2CPP_TYPE_OBJECT)
-            extends.emplace_back(api.class_get_name(parent));
+
+    if (is_enum)        out << "enum ";
+    else if (is_iface)  out << "interface ";
+    else if (is_vt)     out << "struct ";
+    else                out << "class ";
+
+    out << cn;
+
+    // Base class / interfaces
+    if (api.class_get_parent) {
+        auto parent = api.class_get_parent(klass);
+        if (parent) {
+            auto pname = safeClassName(parent);
+            if (pname != "object" && pname != "ValueType" && pname != "Enum")
+                out << " : " << pname;
+        }
     }
-    void* iter = nullptr;
-    while (auto itf = api.class_get_interfaces(klass, &iter))
-        extends.emplace_back(api.class_get_name(itf));
-    if (!extends.empty()) {
-        out << " : " << extends[0];
-        for (size_t i = 1; i < extends.size(); ++i) out << ", " << extends[i];
-    }
-    out << "\n{";
+
+    out << "\n{\n";
     out << dumpFields(klass);
     out << dumpProperties(klass);
     out << dumpMethods(klass);
@@ -362,45 +422,60 @@ static std::string dumpType(const Il2CppType* type) {
     return out.str();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Output writers
+// ─────────────────────────────────────────────────────────────────────────────
+
 namespace output {
 
-static void ensureDirectory(const std::string& path) { mkdir(path.c_str(), 0755); }
+// Ensure directory exists with correct permissions.
+// Returns true on success.
+static bool ensureDirectory(const char* dir) {
+    struct stat st{};
+    if (stat(dir, &st) == 0) return S_ISDIR(st.st_mode);
+    // Try to create, including /sdcard paths that may need shell mkdir
+    if (mkdir(dir, 0755) == 0) { LOGI("created output dir: %s", dir); return true; }
+    // Fallback: try via /proc/self/exe shell (shouldn't be needed with root)
+    LOGE("failed to create dir: %s (errno=%d)", dir, errno);
+    // Last resort: use /data/local/tmp
+    return false;
+}
 
 static void writeCppHeader(
-    const std::string& dir,
+    const char* dir,
     const std::vector<std::pair<Il2CppClass*, std::string>>& classes
 ) {
-    auto path = dir + "/dump.h";
+    auto path = std::string(dir) + "/dump.h";
     std::ofstream f(path);
     if (!f.is_open()) { LOGE("failed to open %s", path.c_str()); return; }
-    f << "#pragma once\n#include <cstdint>\n\n";
     auto& api = il2cpp_api::g_api;
+    f << "// Generated by Eaquel Dumper\n#pragma once\n#include <cstdint>\n\n";
     for (const auto& [klass, dll] : classes) {
         if (!klass) continue;
-        auto cn = api.class_get_name(klass);
-        auto ns = api.class_get_namespace(klass);
-        if (!cn) continue;
-        f << "// DLL: " << dll << "\n";
-        if (ns && ns[0] != '\0') f << "// Namespace: " << ns << "\n";
+        auto cn = api.class_get_name ? api.class_get_name(klass) : nullptr;
+        if (!cn || !*cn) continue;
+        auto ns = api.class_get_namespace ? api.class_get_namespace(klass) : nullptr;
+        f << "// " << dll << " | " << safeStr(ns) << "::" << cn << "\n";
         f << "struct " << cn << " {\n";
         void* iter = nullptr;
-        while (auto field = api.class_get_fields(klass, &iter)) {
-            auto fn  = api.field_get_name(field);
-            auto fo  = api.field_get_offset(field);
-            auto fc  = api.class_from_type(api.field_get_type(field));
-            auto tn  = fc ? api.class_get_name(fc) : "void*";
-            if (!fn) continue;
-            f << "    // 0x" << std::hex << fo << "\n";
-            f << "    // " << (tn ? tn : "unknown") << " " << fn << ";\n";
+        if (api.class_get_fields) {
+            while (auto field = api.class_get_fields(klass, &iter)) {
+                if (!field) continue;
+                auto fname  = api.field_get_name   ? api.field_get_name(field)   : nullptr;
+                auto foffset= api.field_get_offset ? api.field_get_offset(field) : 0;
+                std::string ftname = "void*";
+                if (api.field_get_type && api.class_from_type) {
+                    auto ft = api.field_get_type(field);
+                    if (ft) ftname = safeClassName(api.class_from_type(ft));
+                }
+                f << "    " << ftname << " " << safeStr(fname, "unknown")
+                  << "; // 0x" << std::hex << foffset << "\n";
+            }
         }
         for (const auto& m : collectMethods(klass)) {
             if (m.rva == 0) continue;
-            f << "    // " << m.modifier << m.return_type << " " << m.name << "(";
-            for (size_t i = 0; i < m.params.size(); ++i) {
-                if (i > 0) f << ", ";
-                f << m.params[i].first << " " << m.params[i].second;
-            }
-            f << "); // RVA: 0x" << std::hex << m.rva << "\n";
+            f << "    // " << m.modifier << m.return_type << " " << m.name << "() RVA=0x"
+              << std::hex << m.rva << "\n";
         }
         f << "};\n\n";
     }
@@ -409,18 +484,18 @@ static void writeCppHeader(
 }
 
 static void writeFridaScript(
-    const std::string& dir,
+    const char* dir,
     const std::vector<std::pair<Il2CppClass*, std::string>>& classes
 ) {
-    auto path = dir + "/dump.js";
+    auto path = std::string(dir) + "/dump.js";
     std::ofstream f(path);
     if (!f.is_open()) { LOGE("failed to open %s", path.c_str()); return; }
     f << "\"use strict\";\n\nconst il2cppBase = Module.findBaseAddress(\"libil2cpp.so\");\n\n";
     auto& api = il2cpp_api::g_api;
     for (const auto& [klass, dll] : classes) {
         if (!klass) continue;
-        auto cn = api.class_get_name(klass);
-        if (!cn) continue;
+        auto cn = api.class_get_name ? api.class_get_name(klass) : nullptr;
+        if (!cn || !*cn) continue;
         for (const auto& m : collectMethods(klass)) {
             if (m.rva == 0 || m.name.empty()) continue;
             f << "// " << cn << "::" << m.name << "\n";
@@ -438,7 +513,11 @@ static void writeFridaScript(
     LOGI("dump.js written to %s", path.c_str());
 }
 
-}
+} // namespace output
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API init & dump runner
+// ─────────────────────────────────────────────────────────────────────────────
 
 static void runApiInit(void* handle) {
     Dl_info di{};
@@ -446,79 +525,160 @@ static void runApiInit(void* handle) {
         il2cpp_api::g_il2cpp_base = reinterpret_cast<uint64_t>(di.dli_fbase);
     LOGI("il2cpp handle: %p  base: 0x%" PRIx64, handle, il2cpp_api::g_il2cpp_base);
     il2cpp_api::populateFunctionTable(handle);
+
     auto& api = il2cpp_api::g_api;
-    if (!api.domain_get_assemblies) { LOGE("il2cpp api init failed"); return; }
-    while (!api.is_vm_thread(nullptr)) { LOGI("waiting for il2cpp..."); sleep(1); }
-    api.thread_attach(api.domain_get());
+    if (!api.domain_get_assemblies) { LOGE("il2cpp api init failed — aborting"); return; }
+
+    // ── CRASH FIX: guard is_vm_thread before calling it ──
+    // Old code: while (!api.is_vm_thread(nullptr)) — crashes if symbol is null
+    constexpr int kMaxWaitSec = 30;
+    for (int i = 0; i < kMaxWaitSec; ++i) {
+        if (!api.is_vm_thread) {
+            LOGW("is_vm_thread unavailable, proceeding after delay");
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            break;
+        }
+        // Pass nullptr — valid: returns false when called from non-VM thread
+        if (api.is_vm_thread(nullptr)) break;
+        LOGI("waiting for il2cpp VM... (%d/%d)", i + 1, kMaxWaitSec);
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+
+    if (api.thread_attach && api.domain_get) {
+        auto domain = api.domain_get();
+        if (domain) api.thread_attach(domain);
+    }
 }
 
 static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
     auto& api = il2cpp_api::g_api;
+    if (!api.domain_get || !api.domain_get_assemblies) {
+        LOGE("runDump: api not initialised, aborting");
+        return;
+    }
+
     LOGI("dump started -> %s", out_dir);
-    output::ensureDirectory(out_dir);
-    size_t ac = 0;
-    auto domain     = api.domain_get();
+
+    // ── CRASH FIX: try primary dir, fall back to /data/local/tmp ──
+    std::string effective_dir = out_dir;
+    if (!output::ensureDirectory(out_dir)) {
+        LOGW("output dir unavailable, falling back to /data/local/tmp");
+        effective_dir = "/data/local/tmp";
+        if (!output::ensureDirectory(effective_dir.c_str())) {
+            LOGE("runDump: cannot create any output dir, aborting");
+            return;
+        }
+    }
+    const char* dir = effective_dir.c_str();
+
+    size_t ac    = 0;
+    auto domain  = api.domain_get();
+    if (!domain) { LOGE("domain_get returned null"); return; }
     auto assemblies = api.domain_get_assemblies(domain, &ac);
+    if (!assemblies || ac == 0) { LOGE("no assemblies found"); return; }
+
     std::stringstream img_header;
     for (size_t i = 0; i < ac; ++i) {
-        auto img = api.assembly_get_image(assemblies[i]);
-        img_header << "// Image " << i << ": " << api.image_get_name(img) << "\n";
+        if (!assemblies[i]) continue;
+        auto img = api.assembly_get_image ? api.assembly_get_image(assemblies[i]) : nullptr;
+        if (!img) continue;
+        auto iname = api.image_get_name ? api.image_get_name(img) : nullptr;
+        img_header << "// Image " << i << ": " << safeStr(iname) << "\n";
     }
+
     std::vector<std::string>                          type_outputs;
     std::vector<std::pair<Il2CppClass*, std::string>> class_registry;
 
     if (api.image_get_class) {
         LOGI("il2cpp >= 2018.3 path");
         for (size_t i = 0; i < ac; ++i) {
-            auto img    = api.assembly_get_image(assemblies[i]);
-            auto dll    = std::string(api.image_get_name(img));
-            auto hdr    = "\n// Dll : " + dll;
-            auto cc     = api.image_get_class_count(img);
+            if (!assemblies[i]) continue;
+            auto img = api.assembly_get_image ? api.assembly_get_image(assemblies[i]) : nullptr;
+            if (!img) continue;
+            auto iname = api.image_get_name ? api.image_get_name(img) : nullptr;
+            auto dll   = std::string(safeStr(iname));
+            auto hdr   = "\n// Dll : " + dll;
+            auto cc    = api.image_get_class_count ? api.image_get_class_count(img) : 0;
             for (size_t j = 0; j < cc; ++j) {
-                auto klass = const_cast<Il2CppClass*>(api.image_get_class(img, j));
-                type_outputs.push_back(hdr + dumpType(api.class_get_type(klass)));
-                class_registry.emplace_back(klass, dll);
+                auto klass_c = api.image_get_class(img, j);
+                if (!klass_c) continue;
+                auto klass = const_cast<Il2CppClass*>(klass_c);
+                auto type  = api.class_get_type ? api.class_get_type(klass) : nullptr;
+                if (!type) continue;
+                auto dumped = dumpType(type);
+                if (!dumped.empty()) {
+                    type_outputs.push_back(hdr + dumped);
+                    class_registry.emplace_back(klass, dll);
+                }
             }
         }
     } else {
         LOGI("il2cpp < 2018.3 reflection path");
-        auto corlib      = api.get_corlib();
-        auto asm_class   = api.class_from_name(corlib, "System.Reflection", "Assembly");
-        auto asm_load    = api.class_get_method_from_name(asm_class, "Load", 1);
+        if (!api.get_corlib || !api.class_from_name || !api.class_get_method_from_name ||
+            !api.string_new || !api.class_get_type)
+        {
+            LOGE("reflection path: required api missing"); return;
+        }
+        auto corlib       = api.get_corlib();
+        if (!corlib) { LOGE("get_corlib returned null"); return; }
+        auto asm_class    = api.class_from_name(corlib, "System.Reflection", "Assembly");
+        if (!asm_class)   { LOGE("Assembly class not found"); return; }
+        auto asm_load     = api.class_get_method_from_name(asm_class, "Load",     1);
         auto asm_gettypes = api.class_get_method_from_name(asm_class, "GetTypes", 0);
-        if (!asm_load || !asm_load->methodPointer)     { LOGE("Assembly::Load not found");     return; }
+        if (!asm_load     || !asm_load->methodPointer)     { LOGE("Assembly::Load not found");     return; }
         if (!asm_gettypes || !asm_gettypes->methodPointer) { LOGE("Assembly::GetTypes not found"); return; }
         using Load_fn     = void* (*)(void*, Il2CppString*, void*);
         using GetTypes_fn = Il2CppArray* (*)(void*, void*);
         for (size_t i = 0; i < ac; ++i) {
-            auto img  = api.assembly_get_image(assemblies[i]);
-            auto dll  = std::string(api.image_get_name(img));
-            auto hdr  = "\n// Dll : " + dll;
-            auto dot  = dll.rfind('.');
-            auto name = api.string_new(dll.substr(0, dot).data());
+            if (!assemblies[i]) continue;
+            auto img  = api.assembly_get_image ? api.assembly_get_image(assemblies[i]) : nullptr;
+            if (!img) continue;
+            auto iname = api.image_get_name ? api.image_get_name(img) : nullptr;
+            auto dll   = std::string(safeStr(iname));
+            auto hdr   = "\n// Dll : " + dll;
+            auto dot   = dll.rfind('.');
+            auto name  = api.string_new(dll.substr(0, dot).data());
+            if (!name) continue;
             auto ref_asm   = reinterpret_cast<Load_fn>(asm_load->methodPointer)(nullptr, name, nullptr);
+            if (!ref_asm) continue;
             auto ref_types = reinterpret_cast<GetTypes_fn>(asm_gettypes->methodPointer)(ref_asm, nullptr);
+            if (!ref_types) continue;
             for (size_t j = 0; j < ref_types->max_length; ++j) {
+                if (!ref_types->vector[j]) continue;
                 auto klass = api.class_from_system_type(
                     static_cast<Il2CppReflectionType*>(ref_types->vector[j]));
-                type_outputs.push_back(hdr + dumpType(api.class_get_type(klass)));
-                class_registry.emplace_back(klass, dll);
+                if (!klass) continue;
+                auto type = api.class_get_type(klass);
+                if (!type) continue;
+                auto dumped = dumpType(type);
+                if (!dumped.empty()) {
+                    type_outputs.push_back(hdr + dumped);
+                    class_registry.emplace_back(klass, dll);
+                }
             }
         }
     }
 
+    // ── Write dump.cs ──
     {
-        auto cs_path = std::string(out_dir) + "/dump.cs";
+        auto cs_path = effective_dir + "/dump.cs";
         std::ofstream cs(cs_path);
-        cs << img_header.str();
-        for (const auto& e : type_outputs) cs << e;
-        cs.close();
-        LOGI("dump.cs written to %s", cs_path.c_str());
+        if (!cs.is_open()) { LOGE("failed to open %s", cs_path.c_str()); }
+        else {
+            cs << img_header.str();
+            for (const auto& e : type_outputs) cs << e;
+            cs.close();
+            LOGI("dump.cs written: %zu types -> %s", type_outputs.size(), cs_path.c_str());
+        }
     }
-    if (cfg.generate_cpp_header)   output::writeCppHeader(out_dir, class_registry);
-    if (cfg.generate_frida_script) output::writeFridaScript(out_dir, class_registry);
-    LOGI("all outputs written to %s", out_dir);
+    if (cfg.generate_cpp_header)   output::writeCppHeader  (dir, class_registry);
+    if (cfg.generate_frida_script) output::writeFridaScript (dir, class_registry);
+    LOGI("all outputs written to %s", dir);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// x86 NativeBridge loader
+// ─────────────────────────────────────────────────────────────────────────────
 
 namespace bridge {
 
@@ -537,20 +697,25 @@ struct NativeBridgeCallbacks {
 [[nodiscard]] static std::string resolveNativeLibDir(JavaVM* jvm) {
     JNIEnv* env = nullptr;
     jvm->AttachCurrentThread(&env, nullptr);
+    if (!env) return {};
     auto atc = env->FindClass("android/app/ActivityThread");
     if (!atc) { LOGE("ActivityThread not found"); return {}; }
     auto cam = env->GetStaticMethodID(atc, "currentApplication", "()Landroid/app/Application;");
     if (!cam) { LOGE("currentApplication not found"); return {}; }
     auto app  = env->CallStaticObjectMethod(atc, cam);
+    if (!app) return {};
     auto appc = env->GetObjectClass(app);
-    if (!appc) { LOGE("application class not found"); return {}; }
+    if (!appc) return {};
     auto gaim = env->GetMethodID(appc, "getApplicationInfo", "()Landroid/content/pm/ApplicationInfo;");
-    if (!gaim) { LOGE("getApplicationInfo not found"); return {}; }
+    if (!gaim) return {};
     auto ai   = env->CallObjectMethod(app, gaim);
+    if (!ai)  return {};
     auto nldf = env->GetFieldID(env->GetObjectClass(ai), "nativeLibraryDir", "Ljava/lang/String;");
-    if (!nldf) { LOGE("nativeLibraryDir not found"); return {}; }
+    if (!nldf) return {};
     auto jstr = reinterpret_cast<jstring>(env->GetObjectField(ai, nldf));
+    if (!jstr) return {};
     auto cstr = env->GetStringUTFChars(jstr, nullptr);
+    if (!cstr) return {};
     LOGI("native lib dir: %s", cstr);
     std::string result(cstr);
     env->ReleaseStringUTFChars(jstr, cstr);
@@ -568,10 +733,12 @@ static bool loadViaX86(
     const config::DumperConfig& cfg, int api_level, void* data, size_t length
 ) {
     std::this_thread::sleep_for(std::chrono::seconds(5));
-    auto libart = dlopen("libart.so", RTLD_NOW);
-    auto get_vms = reinterpret_cast<jint (*)(JavaVM**, jsize, jsize*)>(
+    auto libart   = dlopen("libart.so", RTLD_NOW);
+    if (!libart) return false;
+    auto get_vms  = reinterpret_cast<jint (*)(JavaVM**, jsize, jsize*)>(
         dlsym(libart, "JNI_GetCreatedJavaVMs"));
     LOGI("JNI_GetCreatedJavaVMs: %p", get_vms);
+    if (!get_vms) return false;
     JavaVM* jvm_buf[1]; jsize num = 0;
     if (get_vms(jvm_buf, 1, &num) != JNI_OK || num == 0) { LOGE("GetCreatedJavaVMs failed"); return false; }
     auto jvm     = jvm_buf[0];
@@ -581,13 +748,15 @@ static bool loadViaX86(
         LOGI("x86 native, NativeBridge not needed"); munmap(data, length); return false;
     }
     void* nb = dlopen("libhoudini.so", RTLD_NOW);
-    if (!nb) { auto prop = readNativeBridgeProp(); nb = dlopen(prop.data(), RTLD_NOW); }
+    if (!nb) { auto prop = readNativeBridgeProp(); if (!prop.empty()) nb = dlopen(prop.data(), RTLD_NOW); }
     if (!nb) return false;
     auto cb = reinterpret_cast<NativeBridgeCallbacks*>(dlsym(nb, "NativeBridgeItf"));
     if (!cb) return false;
     int memfd = static_cast<int>(syscall(__NR_memfd_create, "anon", MFD_CLOEXEC));
+    if (memfd < 0) return false;
     ftruncate(memfd, static_cast<off_t>(length));
     auto mem = mmap(nullptr, length, PROT_WRITE, MAP_SHARED, memfd, 0);
+    if (mem == MAP_FAILED) { close(memfd); return false; }
     memcpy(mem, data, length);
     munmap(mem, length);
     munmap(data, length);
@@ -599,12 +768,18 @@ static bool loadViaX86(
     if (!arm_handle) { close(memfd); return false; }
     auto jni_load = reinterpret_cast<void (*)(JavaVM*, void*)>(
         cb->getTrampoline(arm_handle, "JNI_OnLoad", nullptr, 0));
+    if (!jni_load) { close(memfd); return false; }
     auto combined = game_dir + "|" + out_dir;
     jni_load(jvm, const_cast<char*>(combined.c_str()));
+    close(memfd);
     return true;
 }
 
-}
+} // namespace bridge
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Retry logic
+// ─────────────────────────────────────────────────────────────────────────────
 
 namespace {
 
@@ -619,14 +794,16 @@ constexpr int64_t kMaxDelayMs  = 16000;
 }
 
 static void hackStart(
-    const std::string& game_dir,
+    const std::string& /*game_dir*/,
     const std::string& out_dir,
     const config::DumperConfig& cfg
 ) {
     for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
+        // ── CRASH FIX: close handle after use ──
         void* handle = xdl_open("libil2cpp.so", XDL_DEFAULT);
         if (handle) {
             runApiInit(handle);
+            xdl_close(handle); // release xdl handle — does NOT unload the library
             runDump(out_dir.c_str(), cfg);
             return;
         }
@@ -652,7 +829,11 @@ static void hackPrepare(
     hackStart(game_dir, out_dir, cfg);
 }
 
-}
+} // anonymous namespace
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Zygisk module
+// ─────────────────────────────────────────────────────────────────────────────
 
 class EaquelDumperModule : public zygisk::ModuleBase {
 public:
@@ -662,11 +843,15 @@ public:
     }
 
     void preAppSpecialize(zygisk::AppSpecializeArgs* args) override {
-        auto pkg = env->GetStringUTFChars(args->nice_name,  nullptr);
-        auto dir = env->GetStringUTFChars(args->app_data_dir, nullptr);
-        preSpecialize(pkg, dir);
-        env->ReleaseStringUTFChars(args->nice_name,    pkg);
-        env->ReleaseStringUTFChars(args->app_data_dir, dir);
+        if (!args) return;
+        // ── CRASH FIX: guard GetStringUTFChars against null jstring ──
+        const char* pkg = nullptr;
+        const char* dir = nullptr;
+        if (args->nice_name)    pkg = env->GetStringUTFChars(args->nice_name,    nullptr);
+        if (args->app_data_dir) dir = env->GetStringUTFChars(args->app_data_dir, nullptr);
+        preSpecialize(pkg ? pkg : "", dir ? dir : "");
+        if (pkg) env->ReleaseStringUTFChars(args->nice_name,    pkg);
+        if (dir) env->ReleaseStringUTFChars(args->app_data_dir, dir);
     }
 
     void postAppSpecialize(const zygisk::AppSpecializeArgs*) override {
@@ -702,6 +887,7 @@ private:
         enable_hack = true;
         game_dir    = app_data_dir;
         out_dir     = active_cfg.output_dir;
+        if (out_dir.empty()) out_dir = std::string(config::kFallbackOutput);
 #if defined(__i386__) || defined(__x86_64__)
         loadArmBridgePayload();
 #endif
@@ -724,6 +910,11 @@ private:
         bridge_length = static_cast<size_t>(sb.st_size);
         bridge_data   = mmap(nullptr, bridge_length, PROT_READ, MAP_PRIVATE, fd, 0);
         close(fd);
+        if (bridge_data == MAP_FAILED) {
+            LOGE("mmap arm bridge failed");
+            bridge_data   = nullptr;
+            bridge_length = 0;
+        }
     }
 };
 
@@ -731,10 +922,11 @@ REGISTER_ZYGISK_MODULE(EaquelDumperModule)
 
 #if defined(__arm__) || defined(__aarch64__)
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
+    if (!vm) return JNI_ERR;
     std::string combined(reserved ? static_cast<const char*>(reserved) : "");
     auto sep  = combined.find('|');
     auto game = (sep != std::string::npos) ? combined.substr(0, sep) : combined;
-    auto out  = (sep != std::string::npos) ? combined.substr(sep + 1) : combined;
+    auto out  = (sep != std::string::npos) ? combined.substr(sep + 1) : std::string(config::kFallbackOutput);
     config::DumperConfig cfg;
     cfg.output_dir = out;
     std::thread([g = std::move(game), o = std::move(out), c = std::move(cfg)]() mutable {

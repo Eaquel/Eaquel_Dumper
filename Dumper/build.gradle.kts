@@ -31,17 +31,22 @@ android {
             cmake {
                 arguments(
                     "-DMODULE_NAME:STRING=$moduleLibraryName",
+                    // 16 KB page-size support (required for Android 15+ devices)
                     "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
                     "-DCMAKE_BUILD_TYPE=Release"
                 )
                 cppFlags(
-                    "-std=c++20",
+                    "-std=c++23",
                     "-O3",
                     "-fvisibility=hidden",
                     "-fvisibility-inlines-hidden",
-                    "-flto",
+                    // Thin LTO: fast incremental, good inlining across TU
+                    "-flto=thin",
                     "-ffunction-sections",
-                    "-fdata-sections"
+                    "-fdata-sections",
+                    // Crash safety
+                    "-fstack-protector-strong",
+                    "-D_FORTIFY_SOURCE=2"
                 )
             }
         }
@@ -146,15 +151,26 @@ androidComponents {
             destinationDirectory.set(outDir)
 
             doLast {
-                val configSource = File("$capturedRootDir/eaquel_config.json")
-                if (configSource.exists()) {
-                    val targetZip = File("$capturedOutDir/$zipFileName")
-                    val zipOut = ZipOutputStream(FileOutputStream(targetZip, true))
-                    zipOut.putNextEntry(ZipEntry("eaquel_config.json"))
-                    configSource.inputStream().use { it.copyTo(zipOut) }
-                    zipOut.closeEntry()
-                    zipOut.close()
-                    println("eaquel_config.json bundled into $zipFileName")
+                val targetZip = File("$capturedOutDir/$zipFileName")
+                ZipOutputStream(FileOutputStream(targetZip, true)).use { zipOut ->
+
+                    // Bundle eaquel_config.json if present
+                    val configSource = File("$capturedRootDir/eaquel_config.json")
+                    if (configSource.exists()) {
+                        zipOut.putNextEntry(ZipEntry("eaquel_config.json"))
+                        configSource.inputStream().use { it.copyTo(zipOut) }
+                        zipOut.closeEntry()
+                        println("Bundled eaquel_config.json → $zipFileName")
+                    }
+
+                    // Bundle the WebUI (index.html) so KernelSU/MMRL can serve it
+                    val webUi = File("$capturedRootDir/webroot/index.html")
+                    if (webUi.exists()) {
+                        zipOut.putNextEntry(ZipEntry("webroot/index.html"))
+                        webUi.inputStream().use { it.copyTo(zipOut) }
+                        zipOut.closeEntry()
+                        println("Bundled webroot/index.html → $zipFileName")
+                    }
                 }
             }
         }
@@ -163,6 +179,7 @@ androidComponents {
             finalizedBy(zipTask)
         }
 
+        // ── ADB convenience tasks ──────────────────────────────────────────
         tasks.register<Exec>("push$variantCapped") {
             dependsOn(zipTask)
             workingDir(outDir)
@@ -170,7 +187,6 @@ androidComponents {
         }
 
         tasks.register<Exec>("pushConfig$variantCapped") {
-            dependsOn(zipTask)
             description = "Push eaquel_config.json to /data/local/tmp/ on device"
             workingDir(File(capturedRootDir))
             commandLine(
@@ -193,6 +209,7 @@ androidComponents {
             commandLine("adb", "shell", "reboot")
         }
 
+        // Full deploy: flash module + push config, then reboot
         tasks.register<Exec>("deployFull$variantCapped") {
             dependsOn("flash$variantCapped", "pushConfig$variantCapped")
             description = "Flash module + push config, then reboot"
