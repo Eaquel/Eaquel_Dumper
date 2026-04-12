@@ -42,7 +42,6 @@ env:
 
 jobs:
 
-  # ───────────────────────────────────────────────────────────────────────────
   build:
     name: "🏗️  Assemble · ${{ github.event.inputs.build_variant }}"
     runs-on: ubuntu-latest
@@ -101,11 +100,6 @@ jobs:
           echo "  eaquel_config.json (baked at build)"
           echo "──────────────────────────────────────"
           cat eaquel_config.json
-          echo "──────────────────────────────────────"
-          echo ""
-          echo "  ✅  target_package is intentionally blank."
-          echo "  📱  Set it at runtime via Kitsune WebUI"
-          echo "      or: adb push eaquel_config.json /data/local/tmp/"
 
       - name: "📝  Patch Module Description"
         run: |
@@ -125,19 +119,6 @@ jobs:
             --no-daemon  \
             --stacktrace \
             --build-cache
-
-      - name: "📦  Bundle Config into Magisk ZIP"
-        run: |
-          VARIANT="${{ github.event.inputs.build_variant }}"
-          ZIP_PATH=$(find out/ -name "*.zip" | head -1)
-
-          if [ -n "$ZIP_PATH" ]; then
-            cp eaquel_config.json /tmp/eaquel_config.json
-            zip -j "$ZIP_PATH" /tmp/eaquel_config.json
-            echo "✅  eaquel_config.json bundled → $ZIP_PATH"
-          else
-            echo "⚠️  No zip found — config not bundled"
-          fi
 
       - name: "📤  Upload Module ZIP"
         uses: actions/upload-artifact@v4
