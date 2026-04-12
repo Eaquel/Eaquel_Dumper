@@ -115,13 +115,17 @@ androidComponents {
             }
         }
 
+        val zipTmpDir = file("${rootProject.buildDir}/zip_staging")
+        val zipFinalPath = outDir.resolve(zipFileName)
+
         val zipTask = tasks.register<Zip>("zip$variantCapped") {
             dependsOn(prepareTask)
-            from(skeletonDir) {
-                exclude("**/*.zip")
-            }
+            from(skeletonDir)
             archiveFileName.set(zipFileName)
-            destinationDirectory.set(outDir)
+            destinationDirectory.set(zipTmpDir)
+            doLast {
+                zipTmpDir.resolve(zipFileName).copyTo(zipFinalPath, overwrite = true)
+            }
         }
 
         tasks.matching { it.name == "assemble$variantCapped" }.configureEach {

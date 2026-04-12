@@ -523,20 +523,20 @@ body::before {
 
     <div class="flex gap-2">
       <div class="stat-chip">
-        <span class="val" id="stat-total">0</span>
-        <span class="lbl">Apps</span>
-      </div>
-      <div class="stat-chip">
-        <span class="val text-green-400" id="stat-game">0</span>
-        <span class="lbl">Games</span>
-      </div>
-      <div class="stat-chip">
-        <span class="val text-blue-400" id="stat-il2cpp">0</span>
+        <span class="val text-blue-400" id="stat-total">0</span>
         <span class="lbl">IL2CPP</span>
       </div>
       <div class="stat-chip">
         <span class="val text-amber-400" id="stat-unity">0</span>
         <span class="lbl">Unity</span>
+      </div>
+      <div class="stat-chip">
+        <span class="val text-green-400" id="stat-game">0</span>
+        <span class="lbl">Games</span>
+      </div>
+      <div class="stat-chip" id="stat-chip-running" onclick="Core.refreshBaseAddresses()" style="cursor:pointer;">
+        <span class="val text-green-400" id="stat-il2cpp">0</span>
+        <span class="lbl">Running</span>
       </div>
     </div>
 
@@ -551,10 +551,9 @@ body::before {
     </div>
 
     <div class="flex gap-2 overflow-x-auto pb-1" id="filter-row" style="scrollbar-width:none;">
-      <button onclick="Core.setFilter('all')"    id="f-all"    class="btn-primary px-3 py-1 text-[9px] font-bold flex-shrink-0">ALL</button>
-      <button onclick="Core.setFilter('game')"   id="f-game"   class="btn-ghost px-3 py-1 text-[9px] font-bold flex-shrink-0">🎮 GAMES</button>
-      <button onclick="Core.setFilter('il2cpp')" id="f-il2cpp" class="btn-ghost px-3 py-1 text-[9px] font-bold flex-shrink-0">⚙ IL2CPP</button>
-      <button onclick="Core.setFilter('unity')"  id="f-unity"  class="btn-ghost px-3 py-1 text-[9px] font-bold flex-shrink-0">🔷 UNITY</button>
+      <button onclick="Core.setFilter('all')"   id="f-all"   class="btn-primary px-3 py-1 text-[9px] font-bold flex-shrink-0">ALL IL2CPP</button>
+      <button onclick="Core.setFilter('game')"  id="f-game"  class="btn-ghost px-3 py-1 text-[9px] font-bold flex-shrink-0">🎮 GAMES</button>
+      <button onclick="Core.setFilter('unity')" id="f-unity" class="btn-ghost px-3 py-1 text-[9px] font-bold flex-shrink-0">🔷 UNITY</button>
     </div>
 
     <div id="app-grid" class="flex flex-col gap-2 pb-4">
@@ -986,8 +985,8 @@ const Core = {
 
   setFilter(f) {
     AppState.filter = f;
-    ["all","game","il2cpp","unity"].forEach(x => {
-      const el = document.getElementById(`f-${x}`);
+    ["all","game","unity"].forEach(x => {
+      const el = document.getElementById("f-" + x);
       if (!el) return;
       el.className = x === f
         ? "btn-primary px-3 py-1 text-[9px] font-bold flex-shrink-0"
@@ -1004,13 +1003,17 @@ const Core = {
   renderApps() {
     const grid = document.getElementById("app-grid");
     let apps = AppState.apps;
-    if (AppState.search) apps = apps.filter(a => a.pkg.toLowerCase().includes(AppState.search) || (a.name||"").toLowerCase().includes(AppState.search));
-    if (AppState.filter === "game")   apps = apps.filter(a => a.category === "game");
-    if (AppState.filter === "il2cpp") apps = apps.filter(a => a.hasIl2cpp);
-    if (AppState.filter === "unity")  apps = apps.filter(a => a.hasUnity);
+    if (AppState.search) apps = apps.filter(a =>
+      a.pkg.toLowerCase().includes(AppState.search) ||
+      (a.name||"").toLowerCase().includes(AppState.search)
+    );
+    if (AppState.filter === "game")  apps = apps.filter(a => a.category === "game");
+    if (AppState.filter === "unity") apps = apps.filter(a => a.hasUnity);
 
     if (!apps.length) {
-      grid.innerHTML = `<div class="text-center text-gray-600 text-[11px] py-6 fade-in"><i class="fa-solid fa-binoculars text-2xl mb-2 block"></i>No apps match filter</div>`;
+      grid.innerHTML = AppState.apps.length === 0
+        ? `<div class="text-center text-gray-600 text-[11px] py-8 flex flex-col items-center gap-3"><i class="fa-solid fa-radar text-3xl text-red-800"></i><span>Tap <span class="text-red-500 font-bold">SCAN</span> to detect IL2CPP games</span></div>`
+        : `<div class="text-center text-gray-600 text-[11px] py-6 fade-in"><i class="fa-solid fa-binoculars text-2xl mb-2 block"></i>No apps match filter</div>`;
       return;
     }
 
@@ -1018,20 +1021,31 @@ const Core = {
     apps.forEach((app, i) => {
       const card = document.createElement("div");
       card.className = "app-card fade-in" + (AppState.target === app.pkg ? " selected" : "");
-      card.style.animationDelay = `${Math.min(i * 18, 200)}ms`;
+      card.style.animationDelay = Math.min(i * 18, 200) + "ms";
+      card.setAttribute("data-pkg", app.pkg);
       card.onclick = () => this.selectApp(app);
 
+      const iconHtml = app.icon
+        ? `<img src="${app.icon}" onerror="this.parentElement.innerHTML='${app.emoji}'">`
+        : app.emoji;
+
       const badges = [];
-      if (app.category === "game")  badges.push(`<span class="text-[8px] px-1.5 py-0.5 rounded" style="background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.25);">GAME</span>`);
-      if (app.hasIl2cpp) badges.push(`<span class="text-[8px] px-1.5 py-0.5 rounded" style="background:rgba(56,189,248,0.10);color:#38bdf8;border:1px solid rgba(56,189,248,0.25);">IL2CPP</span>`);
-      if (app.hasUnity)  badges.push(`<span class="text-[8px] px-1.5 py-0.5 rounded" style="background:rgba(167,139,250,0.10);color:#a78bfa;border:1px solid rgba(167,139,250,0.25);">UNITY</span>`);
+      if (app.category === "game") badges.push(`<span class="text-[8px] px-1.5 py-0.5 rounded" style="background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.25);">GAME</span>`);
+      if (app.hasUnity) badges.push(`<span class="text-[8px] px-1.5 py-0.5 rounded" style="background:rgba(167,139,250,0.10);color:#a78bfa;border:1px solid rgba(167,139,250,0.25);">UNITY</span>`);
+      badges.push(`<span class="text-[8px] px-1.5 py-0.5 rounded" style="background:rgba(56,189,248,0.10);color:#38bdf8;border:1px solid rgba(56,189,248,0.25);">IL2CPP</span>`);
+
+      const addrClass = app.baseAddr
+        ? "app-base-addr text-[8px] font-mono text-green-400 mt-0.5 truncate"
+        : "app-base-addr text-[8px] font-mono text-gray-600 mt-0.5";
+      const addrText = app.baseAddr || "not running";
 
       card.innerHTML = `
-        <div class="app-icon-wrap">${app.icon ? `<img src="${app.icon}" onerror="this.parentElement.innerHTML='${app.emoji}'">` : app.emoji}</div>
+        <div class="app-icon-wrap">${iconHtml}</div>
         <div class="flex flex-col min-w-0 flex-1">
           <span class="app-name">${app.name || app.pkg.split(".").pop()}</span>
           <span class="app-pkg">${app.pkg}</span>
-          ${badges.length ? `<div class="flex gap-1 mt-1.5">${badges.join("")}</div>` : ""}
+          <span class="${addrClass}">${addrText}</span>
+          <div class="flex gap-1 mt-1">${badges.join("")}</div>
         </div>
         <div class="app-sel-dot"></div>
       `;
@@ -1075,89 +1089,105 @@ const Core = {
     const icon = document.getElementById("scan-icon");
     btn.disabled = true;
     icon.classList.add("fa-spin");
-    Terminal.log("Scanning packages...", "sys");
+    AppState.apps = [];
+    this.renderApps();
+    Terminal.log("Scanning for IL2CPP games...", "sys");
 
     const TMP = "/data/local/tmp/eaquel";
+    const scanScript = "find /data/app -maxdepth 5 -name libil2cpp.so 2>/dev/null | while read f; do pkg=$(echo $f | sed 's|/data/app/||;s|/.*||;s|-[0-9]*$||;s|~~[^/]*/||'); apk=$(find /data/app -maxdepth 4 -path *${pkg}*/base.apk 2>/dev/null | head -1); unity=0; [ -f \"$apk\" ] && unzip -l \"$apk\" 2>/dev/null | grep -q libunity && unity=1; echo \"${pkg}|${unity}|${apk}\"; done | sort -u";
+    await Bridge.godRun("{ " + scanScript + "; } 2>/dev/null | base64 | tr -d '\\n' > " + TMP + "_scan.b64");
+    const b64 = await Bridge.godRun("cat " + TMP + "_scan.b64 2>/dev/null");
+    const raw  = b64 ? atob(b64.trim()) : "";
 
-    // ── Call 1: pkg list → base64 ──
-    await Bridge.godRun(`pm list packages -3 2>/dev/null | base64 | tr -d '\\n' > ${TMP}_pkgs.b64`);
-    const b64pkgs = await Bridge.godRun(`cat ${TMP}_pkgs.b64`);
-    const rawPkgs = b64pkgs ? atob(b64pkgs.trim()) : "";
-
-    // ── Call 2: all base.apk paths → base64 ──
-    await Bridge.godRun(`find /data/app -maxdepth 4 -name "base.apk" 2>/dev/null | base64 | tr -d '\\n' > ${TMP}_apks.b64`);
-    const b64apks = await Bridge.godRun(`cat ${TMP}_apks.b64`);
-    const rawApks = b64apks ? atob(b64apks.trim()) : "";
-
-    // ── JS: build pkg→apkPath map ──
-    const apkPaths = rawApks.split("\n").map(l => l.trim()).filter(Boolean);
-    const apkMap = {};
-    for (const p of apkPaths) {
-      // /data/app/com.foo.bar-abc/base.apk  or  /data/app/~~xxx==/com.foo.bar-1/base.apk
-      const m = p.match(/\/([\w.]+)-[^/]*\/base\.apk$/);
-      if (m) apkMap[m[1]] = p;
-    }
-
-    const NON_GAME_PREFIXES = [
-      "com.instagram.", "com.facebook.", "com.whatsapp.", "com.twitter.",
-      "com.snapchat.", "com.tiktok.", "com.zhiliaoapp.", "com.ss.android.",
-      "com.linkedin.", "com.pinterest.", "com.reddit.", "com.tumblr.",
-      "com.telegram.", "org.telegram.", "com.viber.", "com.skype.",
-      "com.discord.", "com.spotify.", "com.netflix.", "com.amazon.avod.",
-      "com.amazon.kindle.", "com.microsoft.", "com.adobe.", "tv.twitch.",
-    ];
-    const isNonGame = pkg => NON_GAME_PREFIXES.some(p => pkg.startsWith(p));
-
-    const pkgs = [...new Set(
-      rawPkgs.split("\n")
-        .map(l => l.replace(/^package:/, "").split(/\s+/)[0].trim())
-        .filter(p => p.length > 4 && p.includes(".") && /^[a-zA-Z]/.test(p))
-        .filter(p => !isNonGame(p))
-    )];
-
-    Terminal.log(`Found ${pkgs.length} packages.`, "sys");
-
-    // ── Call 3: single shell — one zipinfo per pkg that has a known APK path ──
-    // Build: echo "pkg|il|un" for each pkg — no pm path, no loops, just sequential one-liners
-    const BATCH = "/data/local/tmp/eaquel_libs.b64";
-    const checks = pkgs.map(pkg => {
-      const apk = apkMap[pkg];
-      if (!apk) return `echo "${pkg}|0|0"`;
-      return `r=$(zipinfo -1 "${apk}" 2>/dev/null); il=0; un=0; echo "$r" | grep -q libil2cpp && il=1; echo "$r" | grep -q libunity && un=1; echo "${pkg}|$il|$un"`;
-    }).join("; ");
-
-    await Bridge.godRun(`{ ${checks}; } | base64 | tr -d '\\n' > ${BATCH}`);
-    const b64libs = await Bridge.godRun(`cat ${BATCH}`);
-    const decoded = b64libs ? atob(b64libs.trim()) : "";
-
-    // ── Parse & render ──
-    const apps = decoded.split("\n").filter(Boolean).map(line => {
-      const [pkg, il, un] = line.split("|");
-      if (!pkg || !pkg.includes(".")) return null;
+    const apps = raw.split("\n").filter(Boolean).map(line => {
+      const parts = line.split("|");
+      const pkg   = (parts[0] || "").trim();
+      if (!pkg || !pkg.includes(".") || pkg.length < 5) return null;
       return {
         pkg,
-        name: pkg.split(".").pop().replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
-        emoji: pkgEmoji(pkg),
-        icon: null,
-        category: guessCategory(pkg),
-        hasIl2cpp: il === "1",
-        hasUnity:  un === "1",
+        name:      pkg.split(".").pop().replace(/_/g," ").replace(/\b\w/g, c => c.toUpperCase()),
+        emoji:     pkgEmoji(pkg),
+        icon:      null,
+        apkPath:   (parts[2] || "").trim(),
+        category:  guessCategory(pkg),
+        hasIl2cpp: true,
+        hasUnity:  parts[1] === "1",
+        baseAddr:  null,
       };
-    }).filter(Boolean).sort((a, b) => {
-      if (b.hasIl2cpp !== a.hasIl2cpp) return b.hasIl2cpp - a.hasIl2cpp;
-      if (b.hasUnity  !== a.hasUnity)  return b.hasUnity  - a.hasUnity;
+    }).filter(Boolean).sort((a,b) => {
+      if (b.hasUnity !== a.hasUnity) return b.hasUnity - a.hasUnity;
       return a.pkg.localeCompare(b.pkg);
     });
 
+    Terminal.log("Found " + apps.length + " IL2CPP game(s).", apps.length ? "ok" : "err");
     AppState.apps = apps;
     this.renderApps();
     document.getElementById("stat-total").textContent  = apps.length;
     document.getElementById("stat-game").textContent   = apps.filter(a => a.category === "game").length;
-    document.getElementById("stat-il2cpp").textContent = apps.filter(a => a.hasIl2cpp).length;
+    document.getElementById("stat-il2cpp").textContent = apps.length;
     document.getElementById("stat-unity").textContent  = apps.filter(a => a.hasUnity).length;
     btn.disabled = false;
     icon.classList.remove("fa-spin");
-    Terminal.log(`Done. IL2CPP: ${apps.filter(a => a.hasIl2cpp).length}, Unity: ${apps.filter(a => a.hasUnity).length}`, "ok");
+    this.fetchIcons(apps);
+    this.refreshBaseAddresses();
+  },
+
+  async fetchIcons(apps) {
+    for (const app of apps) {
+      if (!app.apkPath) continue;
+      try {
+        const iconEntry = await Bridge.godRun(
+          "unzip -l " + app.apkPath + " 2>/dev/null | grep -E 'mipmap-[hx]+hdpi[^/]*/ic_launcher.png' | awk '{print $NF}' | head -1"
+        );
+        const entry = (iconEntry || "").trim();
+        if (!entry) continue;
+        const raw = await Bridge.godRun(
+          "unzip -p " + app.apkPath + " " + entry + " 2>/dev/null | base64 | tr -d '\\n'"
+        );
+        if (raw && raw.length > 100) {
+          app.icon = "data:image/png;base64," + raw.trim();
+          document.querySelectorAll("[data-pkg='" + app.pkg + "'] .app-icon-wrap").forEach(el => {
+            el.innerHTML = "<img src='" + app.icon + "' onerror=\"this.parentElement.innerHTML='" + app.emoji + "'\">";
+          });
+        }
+      } catch(_) {}
+    }
+  },
+
+  async refreshBaseAddresses() {
+    for (const app of AppState.apps) {
+      await this.updateBaseAddress(app.pkg);
+    }
+  },
+
+  async updateBaseAddress(pkg) {
+    const pid = await Bridge.godRun("pidof '" + pkg + "' 2>/dev/null | awk '{print $1}'");
+    const pidStr = (pid || "").trim();
+    const app = AppState.apps.find(a => a.pkg === pkg);
+    if (!app) return;
+    if (!pidStr || !/^\d+$/.test(pidStr)) {
+      app.baseAddr = null;
+      this._updateCardAddr(pkg, null);
+      return;
+    }
+    const maps = await Bridge.godRun(
+      "grep -m1 libil2cpp.so /proc/" + pidStr + "/maps 2>/dev/null | awk '{print $1}' | cut -d- -f1"
+    );
+    const addr = (maps || "").trim();
+    app.baseAddr = addr ? "0x" + addr.toUpperCase() : null;
+    this._updateCardAddr(pkg, app.baseAddr);
+  },
+
+  _updateCardAddr(pkg, addr) {
+    const el = document.querySelector("[data-pkg='" + pkg + "'] .app-base-addr");
+    if (!el) return;
+    if (addr) {
+      el.textContent = addr;
+      el.className = "app-base-addr text-[8px] font-mono text-green-400 mt-0.5 truncate";
+    } else {
+      el.textContent = "not running";
+      el.className = "app-base-addr text-[8px] font-mono text-gray-600 mt-0.5";
+    }
   },
 
   async inject() {
@@ -1197,6 +1227,7 @@ const Core = {
     Terminal.log("Waiting for dump (~10-30s depending on game size)...", "sys");
 
     await new Promise(r => setTimeout(r, 3000));
+    await Core.updateBaseAddress(pkg);
     const checkResult = await Bridge.godRun(
       `[ -f "${outDir}/dump.cs" ] && echo FOUND || echo WAIT`
     );
@@ -1410,9 +1441,20 @@ setInterval(async () => {
       Terminal.log("Dump complete! Go to Extract tab to pull files.", "ok");
     }
   });
+  const running = AppState.apps.filter(a => a.baseAddr).length;
+  document.getElementById("stat-il2cpp").textContent = running;
 }, 2000);
 
 window.onload = () => Core.boot();
+
+setInterval(async () => {
+  if (!AppState.root || AppState.apps.length === 0) return;
+  for (const app of AppState.apps) {
+    await Core.updateBaseAddress(app.pkg);
+  }
+  const running = AppState.apps.filter(a => a.baseAddr).length;
+  document.getElementById("stat-il2cpp").textContent = running;
+}, 8000);
 </script>
 </body>
 </html>
