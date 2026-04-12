@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Eaquel Dumper</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Orbitron:wght@500;700;900&display=swap');
+
+        :root {
+            --red:        #ff0000;
+            --red-glow:   rgba(255,0,0,0.55);
+            --red-dim:    rgba(255,0,0,0.12);
+            --bg:         #040000;
+            --panel:      #090000;
+            --border:     rgba(255,0,0,0.25);
+            --green:      #10b981;
+            --amber:      #f59e0b;
+            --blue:       #38bdf8;
+            --purple:     #a78bfa;
+        }
+
+        * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; outline: none; }
+
+        body {
+            background: var(--bg);
+            color: #d1d5db;
+            font-family: 'JetBrains Mono', monospace;
+            overflow: hidden; margin: 0; padding: 0;
+            display: flex; flex-direction: column;
+            height: 100dvh; width: 100vw;
+        }
+
+        body::before {
+            content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+            background-image:
+                linear-gradient(rgba(255,0,0,0.035) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,0,0,0.035) 1px, transparent 1px);
+            background-size: 28px 28px;
+        }
+
+        ::-webkit-scrollbar { width: 3px; height: 3px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,0,0,0.3); border-radius: 4px; }
+
+        .cyber { font-family: 'Orbitron', sans-serif; }
+        .glow  { text-shadow: 0 0 14px var(--red-glow); }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            box-shadow: inset 0 0 18px rgba(255,0,0,0.025), 0 6px 20px rgba(0,0,0,0.7);
+        }
+
+        .section-title {
+            font-size: 0.65rem; font-weight: 800; letter-spacing: 0.12em;
+            text-transform: uppercase; padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255,0,0,0.2);
+            margin-bottom: 14px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #3d0000 0%, #cc0000 60%, #ff1a1a 100%);
+            color: #fff; font-weight: 800; border-radius: 10px; border: none;
+            box-shadow: 0 0 18px var(--red-glow); transition: all 0.12s;
+        }
+        .btn-primary:active { transform: scale(0.95); box-shadow: 0 0 6px var(--red-glow); }
+
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: #ff4444; border-radius: 10px; transition: all 0.12s;
+        }
+        .btn-ghost:active { background: rgba(255,0,0,0.15); transform: scale(0.95); }
+
+        .btn-green  { background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.4); color: #10b981; border-radius: 10px; transition: all 0.12s; }
+        .btn-green:active { background: rgba(16,185,129,0.25); transform: scale(0.95); }
+
+        .btn-blue   { background: rgba(56,189,248,0.10); border: 1px solid rgba(56,189,248,0.35); color: #38bdf8; border-radius: 10px; transition: all 0.12s; }
+        .btn-blue:active { background: rgba(56,189,248,0.22); transform: scale(0.95); }
+
+        .btn-purple { background: rgba(167,139,250,0.10); border: 1px solid rgba(167,139,250,0.35); color: #a78bfa; border-radius: 10px; transition: all 0.12s; }
+        .btn-purple:active { background: rgba(167,139,250,0.22); transform: scale(0.95); }
+
+        .btn-amber  { background: rgba(245,158,11,0.10); border: 1px solid rgba(245,158,11,0.35); color: #fbbf24; border-radius: 10px; transition: all 0.12s; }
+        .btn-amber:active { background: rgba(245,158,11,0.22); transform: scale(0.95); }
+
+        .input-field {
+            width: 100%; background: #050000;
+            border: 1.5px solid rgba(255,0,0,0.3);
+            color: #fff; padding: 10px 14px;
+            border-radius: 9px; font-family: 'JetBrains Mono', monospace;
+            font-size: 0.78rem; transition: border-color 0.15s;
+        }
+        .input-field:focus { border-color: #ff0000; box-shadow: 0 0 0 2px rgba(255,0,0,0.12); }
+        .input-field::placeholder { color: #4b5563; }
+
+        .toggle-wrap {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 10px 14px;
+            background: #050000; border: 1.5px solid rgba(255,0,0,0.2);
+            border-radius: 9px;
+        }
+        .toggle-label { font-size: 0.72rem; color: #9ca3af; font-weight: 700; }
+        .toggle-input { appearance: none; width: 38px; height: 20px; background: #1f2937;
+            border-radius: 999px; position: relative; cursor: pointer; transition: background 0.2s; }
+        .toggle-input:checked { background: #dc2626; }
+        .toggle-input::after {
+            content: ''; position: absolute; top: 2px; left: 2px;
+            width: 16px; height: 16px; background: #fff;
+            border-radius: 50%; transition: transform 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+        }
+        .toggle-input:checked::after { transform: translateX(18px); }
+
+        .bottom-nav {
+            background: #000;
+            border-top: 1px solid var(--border);
+            display: flex; justify-content: space-around;
+            padding: 10px 0;
+            padding-bottom: calc(10px + env(safe-area-inset-bottom));
+            flex-shrink: 0;
+        }
+        .nav-btn {
+            color: #374151; display: flex; flex-direction: column; align-items: center;
+            font-size: 0.62rem; gap: 4px; font-weight: 800; letter-spacing: 0.05em;
+            transition: color 0.15s; cursor: pointer; padding: 0 10px;
+        }
+        .nav-btn.active { color: var(--red); text-shadow: 0 0 10px var(--red-glow); }
+        .nav-btn i { font-size: 1.2rem; }
+
+        .term-row { margin-bottom: 3px; word-break: break-all; line-height: 1.5; }
+        .t-time { color: #374151; font-size: 0.6rem; margin-right: 6px; }
+        .t-sys  { color: #3b82f6; }
+        .t-ok   { color: #10b981; }
+        .t-err  { color: #ef4444; font-weight: 700; }
+        .t-zg   { color: #a855f7; }
+        .t-data { color: #9ca3af; }
+        .t-cfg  { color: #f59e0b; }
+
+        #splash {
+            position: fixed; inset: 0; background: #000; z-index: 9999;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            transition: opacity 0.45s ease;
+        }
+
+        .badge-root-off { background: rgba(127,0,0,0.2); border: 1px solid #7f1d1d; color: #f87171; }
+        .badge-root-on  { background: rgba(16,185,129,0.15); border: 1px solid #065f46; color: #34d399; }
+
+        .hide { display: none !important; }
+
+        .config-row { display: flex; flex-direction: column; gap: 5px; }
+        .config-label {
+            font-size: 0.6rem; font-weight: 800; letter-spacing: 0.1em;
+            text-transform: uppercase; color: #6b7280;
+        }
+
+        .status-dot {
+            display: inline-block; width: 7px; height: 7px;
+            border-radius: 50%; background: #6b7280;
+        }
+        .status-dot.on  { background: #10b981; box-shadow: 0 0 6px #10b981; }
+        .status-dot.off { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
+
+        @keyframes pulse-red {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0.4; }
+        }
+        .pulse-red { animation: pulse-red 1.4s ease-in-out infinite; }
+    </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════ SPLASH ══ -->
+<div id="splash">
+    <i class="fa-solid fa-ghost text-7xl text-red-600 mb-5" style="text-shadow:0 0 24px red;"></i>
+    <h1 class="cyber glow text-4xl text-white tracking-widest mb-1">EAQUEL<span class="text-red-600">.DUMP</span></h1>
+    <p class="text-[10px] text-red-400 font-bold mt-2 pulse-red tracking-widest" id="splash-txt">INITIALIZING ROOT BRIDGE...</p>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ HEADER ══ -->
+<header class="flex-shrink-0 px-4 py-3 pt-[env(safe-area-inset-top)] bg-black/70 border-b border-[rgba(255,0,0,0.25)] flex justify-between items-center">
+    <div>
+        <h1 class="cyber glow text-xl text-white tracking-[0.18em] leading-none">EAQUEL</h1>
+        <p class="text-[8px] text-red-600 uppercase tracking-widest mt-0.5 font-bold">IL2CPP Binary Resolver · v2.0</p>
+    </div>
+    <div id="root-badge" class="badge-root-off px-3 py-1.5 rounded-lg text-[9px] font-bold flex items-center gap-2">
+        <i class="fa-solid fa-xmark"></i> NO ROOT
+    </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════ MAIN ══ -->
+<main class="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-0" id="main">
+
+    <!-- ─────────────────────────────── TAB: TARGET ─── -->
+    <div id="tab-target" class="flex flex-col gap-4">
+
+        <div class="panel p-5 flex flex-col gap-4">
+            <h3 class="section-title text-red-500 cyber"><i class="fa-solid fa-radar mr-2"></i>TARGET RADAR</h3>
+
+            <div class="config-row">
+                <span class="config-label">Select App · Global Namespace</span>
+                <div class="relative">
+                    <input list="app-list" id="pkg-input" onchange="Core.lockTarget()"
+                        class="input-field pl-10"
+                        placeholder="Scan or type package name...">
+                    <i class="fa-solid fa-box absolute left-3.5 top-1/2 -translate-y-1/2 text-red-700 text-sm"></i>
+                    <datalist id="app-list"></datalist>
+                </div>
+            </div>
+
+            <div class="flex gap-3">
+                <button onclick="Core.scanApps()" class="btn-ghost flex-1 py-2.5 text-xs font-bold">
+                    <i class="fa-solid fa-rotate mr-1" id="scan-icon"></i> SCAN
+                </button>
+                <button onclick="Core.killApp()" class="btn-ghost flex-1 py-2.5 text-xs font-bold">
+                    <i class="fa-solid fa-skull mr-1"></i> KILL
+                </button>
+                <button onclick="Core.wipeApp()" class="btn-ghost flex-1 py-2.5 text-xs font-bold">
+                    <i class="fa-solid fa-trash mr-1"></i> WIPE
+                </button>
+            </div>
+
+            <div class="flex justify-between text-[9px] font-bold px-1">
+                <span id="app-count" class="text-gray-600">Awaiting scan...</span>
+                <span id="target-status" class="text-amber-500">
+                    <i class="fa-solid fa-unlock mr-1"></i>AWAITING
+                </span>
+            </div>
+        </div>
+
+        <div class="panel p-5 flex flex-col gap-3 relative overflow-hidden">
+            <i class="fa-solid fa-biohazard absolute -right-5 -bottom-5 text-[130px] text-red-900/10 pointer-events-none select-none"></i>
+
+            <div class="bg-black/50 border border-red-900/25 rounded-lg p-3">
+                <span class="text-[9px] text-gray-600 font-bold block mb-1">DATA DIR</span>
+                <span class="text-xs text-gray-300 break-all" id="info-path">Waiting for target...</span>
+            </div>
+
+            <button onclick="Core.inject()" class="btn-primary w-full py-4 text-base tracking-[0.18em] cyber">
+                <i class="fa-solid fa-bolt text-yellow-300 mr-2"></i>INJECT PAYLOAD
+            </button>
+        </div>
+    </div>
+
+    <!-- ─────────────────────────────── TAB: CONFIG ─── -->
+    <div id="tab-config" class="flex-col gap-4 hide">
+
+        <div class="panel p-5 flex flex-col gap-4">
+            <h3 class="section-title text-amber-400 cyber">
+                <i class="fa-solid fa-sliders mr-2"></i>RUNTIME CONFIGURATION
+            </h3>
+            <p class="text-[9px] text-gray-500 -mt-2 mb-1">
+                Writes to <span class="text-amber-400 font-bold">/data/local/tmp/eaquel_config.json</span>
+            </p>
+
+            <div class="config-row">
+                <span class="config-label"><i class="fa-solid fa-crosshairs mr-1 text-red-500"></i>Target Package</span>
+                <input type="text" id="cfg-pkg" class="input-field"
+                    placeholder="com.your.game.package" autocomplete="off" spellcheck="false">
+            </div>
+
+            <div class="config-row">
+                <span class="config-label"><i class="fa-solid fa-folder-open mr-1 text-blue-400"></i>Output Directory</span>
+                <input type="text" id="cfg-out" class="input-field"
+                    value="/sdcard/Eaquel" autocomplete="off" spellcheck="false">
+            </div>
+
+            <div class="toggle-wrap">
+                <div>
+                    <span class="toggle-label block"><i class="fa-solid fa-file-code mr-1 text-green-400"></i>Generate C++ Header</span>
+                    <span class="text-[9px] text-gray-600">Exports dump.h with offsets</span>
+                </div>
+                <input type="checkbox" class="toggle-input" id="cfg-header" checked>
+            </div>
+
+            <div class="toggle-wrap">
+                <div>
+                    <span class="toggle-label block"><i class="fa-brands fa-js mr-1 text-yellow-400"></i>Generate Frida Script</span>
+                    <span class="text-[9px] text-gray-600">Exports dump.js with interceptors</span>
+                </div>
+                <input type="checkbox" class="toggle-input" id="cfg-frida" checked>
+            </div>
+
+            <button onclick="Config.save()" class="btn-primary w-full py-3.5 text-sm tracking-widest cyber">
+                <i class="fa-solid fa-floppy-disk mr-2"></i>SAVE &amp; APPLY CONFIG
+            </button>
+        </div>
+
+        <div class="panel p-5 flex flex-col gap-3">
+            <h3 class="section-title text-green-400 cyber">
+                <i class="fa-solid fa-eye mr-2"></i>CURRENT CONFIG STATUS
+            </h3>
+
+            <div id="cfg-status-view" class="bg-black/60 border border-red-900/20 rounded-lg p-3 font-mono text-[10px] text-gray-400 leading-6 min-h-[100px]">
+                Press RELOAD to fetch live config...
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="Config.load()" class="btn-green py-2.5 text-xs font-bold">
+                    <i class="fa-solid fa-arrows-rotate mr-1"></i> RELOAD
+                </button>
+                <button onclick="Config.reset()" class="btn-ghost py-2.5 text-xs font-bold">
+                    <i class="fa-solid fa-rotate-left mr-1"></i> RESET
+                </button>
+            </div>
+        </div>
+
+        <div class="panel p-5 flex flex-col gap-3">
+            <h3 class="section-title text-purple-400 cyber">
+                <i class="fa-solid fa-circle-info mr-2"></i>QUICK SETUP GUIDE
+            </h3>
+
+            <div class="flex flex-col gap-2 text-[9px] text-gray-400 leading-5">
+                <div class="flex gap-3 items-start">
+                    <span class="text-red-500 font-bold mt-0.5">01</span>
+                    <span>Install module ZIP via <span class="text-white font-bold">Magisk / KernelSU / APatch</span></span>
+                </div>
+                <div class="flex gap-3 items-start">
+                    <span class="text-red-500 font-bold mt-0.5">02</span>
+                    <span>Enter target package name above and tap <span class="text-amber-400 font-bold">SAVE & APPLY</span></span>
+                </div>
+                <div class="flex gap-3 items-start">
+                    <span class="text-red-500 font-bold mt-0.5">03</span>
+                    <span>Switch to <span class="text-white font-bold">TARGET</span> tab → tap <span class="text-white font-bold">INJECT PAYLOAD</span></span>
+                </div>
+                <div class="flex gap-3 items-start">
+                    <span class="text-red-500 font-bold mt-0.5">04</span>
+                    <span>Dump appears in configured output dir as <span class="text-green-400 font-bold">dump.cs</span>, <span class="text-blue-400 font-bold">dump.h</span>, <span class="text-yellow-400 font-bold">dump.js</span></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─────────────────────────────── TAB: EXTRACT ─── -->
+    <div id="tab-extract" class="flex flex-col gap-4 hide">
+
+        <div class="panel p-5 flex flex-col gap-3">
+            <h3 class="section-title text-blue-400 cyber"><i class="fa-solid fa-folder-tree mr-2"></i>DUMP EXTRACTION</h3>
+            <p class="text-[9px] text-gray-500 -mt-2">
+                Saves to: <span class="text-green-400 font-bold">/sdcard/Download/EaquelDumps/</span>
+            </p>
+
+            <button onclick="Core.pull('dump.cs')"
+                class="btn-blue p-4 text-sm font-bold flex justify-between items-center">
+                <span><i class="fa-brands fa-cuttlefish mr-2"></i>PULL dump.cs</span>
+                <i class="fa-solid fa-download"></i>
+            </button>
+            <button onclick="Core.pull('dump.h')"
+                class="btn-green p-4 text-sm font-bold flex justify-between items-center">
+                <span><i class="fa-solid fa-file-code mr-2"></i>PULL dump.h</span>
+                <i class="fa-solid fa-download"></i>
+            </button>
+            <button onclick="Core.pull('dump.js')"
+                class="btn-purple p-4 text-sm font-bold flex justify-between items-center">
+                <span><i class="fa-brands fa-js mr-2"></i>PULL dump.js</span>
+                <i class="fa-solid fa-download"></i>
+            </button>
+            <button onclick="Core.pullAll()"
+                class="btn-primary p-4 text-sm font-bold flex justify-between items-center">
+                <span><i class="fa-solid fa-layer-group mr-2"></i>PULL ALL OUTPUTS</span>
+                <i class="fa-solid fa-download"></i>
+            </button>
+        </div>
+
+        <div class="panel p-5 flex flex-col gap-3">
+            <h3 class="section-title text-amber-400 cyber"><i class="fa-solid fa-box mr-2"></i>APK &amp; SYSTEM</h3>
+            <button onclick="Core.pullApk()"
+                class="btn-amber p-4 text-sm font-bold flex justify-between items-center">
+                <span>EXTRACT BASE APK</span>
+                <i class="fa-solid fa-file-export"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- ─────────────────────────────── TAB: TERMINAL ─── -->
+    <div id="tab-term" class="flex flex-col hide panel overflow-hidden" style="height: calc(100dvh - 164px);">
+        <div class="bg-black/90 px-4 py-2.5 border-b border-red-900/30 flex justify-between items-center flex-shrink-0">
+            <span class="text-[10px] font-bold text-red-500 cyber tracking-widest">
+                GOD MODE TTY
+                <span class="status-dot on ml-2"></span>
+            </span>
+            <button onclick="Terminal.clear()" class="text-gray-600 active:text-white transition text-sm">
+                <i class="fa-solid fa-eraser"></i>
+            </button>
+        </div>
+
+        <div id="term-view" class="flex-1 p-3 overflow-y-auto bg-[#020000] text-[10px] flex flex-col gap-0">
+            <div class="term-row t-sys">SYSTEM › Eaquel God-Mode Daemon · Bypassing isolations...</div>
+        </div>
+
+        <div class="bg-black/80 p-3 border-t border-red-900/25 flex gap-2 items-center flex-shrink-0">
+            <span class="text-red-600 font-bold">#</span>
+            <input type="text" id="term-input"
+                class="flex-1 bg-transparent text-green-400 text-[11px] font-mono placeholder-gray-700"
+                placeholder="ls /data/local/tmp"
+                onkeypress="if(event.key==='Enter') Terminal.execCustom()">
+            <button onclick="Terminal.execCustom()"
+                class="text-[9px] bg-red-900/40 text-white px-3 py-1.5 rounded-lg border border-red-900/50 font-bold active:scale-95 transition">
+                RUN
+            </button>
+        </div>
+    </div>
+
+</main>
+
+<!-- ══════════════════════════════════════════════════════ BOTTOM NAV ══ -->
+<nav class="bottom-nav">
+    <div class="nav-btn active" id="nav-target" onclick="Core.switchTab('target')">
+        <i class="fa-solid fa-crosshairs"></i><span>TARGET</span>
+    </div>
+    <div class="nav-btn" id="nav-config" onclick="Core.switchTab('config')">
+        <i class="fa-solid fa-sliders"></i><span>CONFIG</span>
+    </div>
+    <div class="nav-btn" id="nav-extract" onclick="Core.switchTab('extract')">
+        <i class="fa-solid fa-box-archive"></i><span>EXTRACT</span>
+    </div>
+    <div class="nav-btn" id="nav-term" onclick="Core.switchTab('term')">
+        <i class="fa-solid fa-terminal"></i><span>CONSOLE</span>
+    </div>
+</nav>
+
+<script>
+"use strict";
+
+const CONFIG_PATH = "/data/local/tmp/eaquel_config.json";
+
+const AppState = {
+    target : "",
+    root   : false,
+    config : {
+        target_package        : "",
+        output_dir            : "/sdcard/Eaquel",
+        generate_cpp_header   : true,
+        generate_frida_script : true
+    }
+};
+
+// ── TERMINAL ──────────────────────────────────────────────────────────────
+const Terminal = {
+    el: null,
+    init() { this.el = document.getElementById("term-view"); },
+
+    log(msg, type = "data") {
+        if (!msg || !this.el) return;
+        const clean = String(msg).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const typeMap = {
+            err  : "t-err",
+            sys  : "t-sys",
+            ok   : "t-ok",
+            zg   : "t-zg",
+            cfg  : "t-cfg",
+            data : "t-data"
+        };
+        const cls  = typeMap[type] ?? "t-data";
+        const time = new Date().toLocaleTimeString("en-GB", { hour12: false });
+        const div  = document.createElement("div");
+        div.className = `term-row ${cls}`;
+        div.innerHTML = `<span class="t-time">[${time}]</span> ${clean}`;
+        this.el.appendChild(div);
+        if (this.el.childElementCount > 400) this.el.removeChild(this.el.firstChild);
+        this.el.scrollTop = this.el.scrollHeight;
+    },
+
+    clear() { if (this.el) this.el.innerHTML = ""; },
+
+    async execCustom() {
+        const input = document.getElementById("term-input");
+        const cmd   = input.value.trim();
+        if (!cmd) return;
+        input.value = "";
+        this.log(`› ${cmd}`, "sys");
+        const res = await Bridge.godRun(cmd);
+        this.log(res || "[No Output]", "data");
+    }
+};
+
+// ── BRIDGE ─────────────────────────────────────────────────────────────────
+const Bridge = {
+    async run(cmd) {
+        try {
+            let out = "";
+            if      (window.ksu)    out = await window.ksu.exec(cmd);
+            else if (window.mmrl)   out = await window.mmrl.exec(cmd);
+            else if (window.magisk) out = await window.magisk.exec(cmd);
+            else return "";
+            return typeof out === "string"
+                ? out.trim()
+                : ((out.stdout ?? "") + "\n" + (out.stderr ?? "")).trim();
+        } catch (e) {
+            return `[ERR] Bridge: ${e.message}`;
+        }
+    },
+
+    async godRun(cmd) {
+        const safe = cmd.replace(/'/g, "'\\''");
+        let res = await this.run(`nsenter -t 1 -m sh -c '${safe}' 2>/dev/null`);
+        if (!res || res.includes("nsenter: not found") || res.includes("Permission denied")) {
+            res = await this.run(`su -mm -c '${safe}' 2>/dev/null`);
+            if (!res) res = await this.run(cmd);
+        }
+        return res;
+    }
+};
+
+// ── CONFIG ─────────────────────────────────────────────────────────────────
+const Config = {
+    async load() {
+        Terminal.log("Loading config from device...", "cfg");
+        const raw = await Bridge.godRun(`cat ${CONFIG_PATH} 2>/dev/null`);
+        if (!raw || raw.includes("[ERR]") || raw.trim() === "") {
+            Terminal.log("Config file not found — using defaults.", "err");
+            document.getElementById("cfg-status-view").innerHTML =
+                `<span class="text-red-400">⚠  ${CONFIG_PATH} not found</span>`;
+            return;
+        }
+        try {
+            const cfg = JSON.parse(raw);
+            AppState.config = { ...AppState.config, ...cfg };
+            document.getElementById("cfg-pkg").value    = cfg.target_package        ?? "";
+            document.getElementById("cfg-out").value    = cfg.output_dir             ?? "/sdcard/Eaquel";
+            document.getElementById("cfg-header").checked = cfg.generate_cpp_header  ?? true;
+            document.getElementById("cfg-frida").checked  = cfg.generate_frida_script ?? true;
+            this.renderStatus(cfg);
+            Terminal.log("Config loaded successfully.", "ok");
+        } catch (_) {
+            Terminal.log("Config parse error — file may be malformed.", "err");
+        }
+    },
+
+    renderStatus(cfg) {
+        const on  = v => v ? `<span class="text-green-400 font-bold">✔ ON</span>` : `<span class="text-red-400 font-bold">✘ OFF</span>`;
+        const pkg = cfg.target_package
+            ? `<span class="text-red-400 font-bold">${cfg.target_package}</span>`
+            : `<span class="text-gray-600 italic">not set</span>`;
+        document.getElementById("cfg-status-view").innerHTML = `
+<span class="text-gray-500">target_package  :</span> ${pkg}
+<span class="text-gray-500">output_dir      :</span> <span class="text-blue-400">${cfg.output_dir ?? "/sdcard/Eaquel"}</span>
+<span class="text-gray-500">cpp_header      :</span> ${on(cfg.generate_cpp_header)}
+<span class="text-gray-500">frida_script    :</span> ${on(cfg.generate_frida_script)}`.trim();
+    },
+
+    async save() {
+        const pkg    = document.getElementById("cfg-pkg").value.trim();
+        const outDir = document.getElementById("cfg-out").value.trim() || "/sdcard/Eaquel";
+        const header = document.getElementById("cfg-header").checked;
+        const frida  = document.getElementById("cfg-frida").checked;
+
+        const cfg = {
+            target_package        : pkg,
+            output_dir            : outDir,
+            generate_cpp_header   : header,
+            generate_frida_script : frida
+        };
+        AppState.config = cfg;
+        AppState.target = pkg;
+
+        const json   = JSON.stringify(cfg, null, 2).replace(/"/g, '\\"');
+        const mkdirCmd = `mkdir -p /data/local/tmp`;
+        const writeCmd = `printf '%s' "${json}" > ${CONFIG_PATH} && chmod 644 ${CONFIG_PATH}`;
+
+        Terminal.log("Writing config to device...", "cfg");
+        await Bridge.godRun(mkdirCmd);
+        await Bridge.godRun(writeCmd);
+
+        const verify = await Bridge.godRun(`cat ${CONFIG_PATH}`);
+        if (verify && verify.includes("target_package")) {
+            Terminal.log(`Config saved → ${CONFIG_PATH}`, "ok");
+            if (pkg) Terminal.log(`Target locked: ${pkg}`, "ok");
+            this.renderStatus(cfg);
+            if (pkg) {
+                document.getElementById("pkg-input").value = pkg;
+                document.getElementById("info-path").innerText = `/data/data/${pkg}`;
+                document.getElementById("target-status").innerHTML =
+                    `<i class="fa-solid fa-lock text-green-500 mr-1"></i>LOCKED`;
+                document.getElementById("target-status").className = "text-green-500 font-bold text-[9px]";
+            }
+        } else {
+            Terminal.log("Write failed. Check root permissions.", "err");
+        }
+    },
+
+    async reset() {
+        const def = {
+            target_package        : "",
+            output_dir            : "/sdcard/Eaquel",
+            generate_cpp_header   : true,
+            generate_frida_script : true
+        };
+        document.getElementById("cfg-pkg").value      = "";
+        document.getElementById("cfg-out").value      = "/sdcard/Eaquel";
+        document.getElementById("cfg-header").checked = true;
+        document.getElementById("cfg-frida").checked  = true;
+        Terminal.log("Config reset to defaults (not saved).", "cfg");
+        this.renderStatus(def);
+    }
+};
+
+// ── CORE ───────────────────────────────────────────────────────────────────
+const Core = {
+    TABS: ["target", "config", "extract", "term"],
+
+    switchTab(id) {
+        this.TABS.forEach(t => {
+            document.getElementById(`tab-${t}`).classList.add("hide");
+            document.getElementById(`nav-${t}`)?.classList.remove("active");
+        });
+        document.getElementById(`tab-${id}`).classList.remove("hide");
+        document.getElementById(`nav-${id}`)?.classList.add("active");
+    },
+
+    async boot() {
+        Terminal.init();
+        let attempts = 0;
+        while (attempts < 25) {
+            if (window.ksu || window.mmrl || window.magisk) break;
+            await new Promise(r => setTimeout(r, 120));
+            attempts++;
+        }
+        const idCheck = await Bridge.run("id");
+        const splash  = document.getElementById("splash");
+        const txt     = document.getElementById("splash-txt");
+
+        if (idCheck.includes("uid=0") || idCheck.includes("root")) {
+            AppState.root = true;
+            const badge = document.getElementById("root-badge");
+            badge.className = "badge-root-on px-3 py-1.5 rounded-lg text-[9px] font-bold flex items-center gap-2";
+            badge.innerHTML = '<i class="fa-solid fa-shield-check"></i> ROOT ACTIVE';
+            Terminal.log("Root environment initialised.", "ok");
+            splash.style.opacity = "0";
+            setTimeout(() => splash.remove(), 500);
+            await Config.load();
+        } else {
+            txt.textContent = "ROOT ACCESS DENIED";
+            txt.className   = "text-xs text-red-500 font-bold mt-2";
+        }
+    },
+
+    async scanApps() {
+        if (!AppState.root) { alert("Root Required!"); return; }
+        const icon = document.getElementById("scan-icon");
+        icon.classList.add("fa-spin");
+        Terminal.log("Bypassing sandbox → reading /data/data via nsenter...", "sys");
+
+        const raw  = await Bridge.godRun("ls -1 /data/data");
+        const skip = new Set([
+            "com.android.", "android.", "com.google.", "com.qualcomm.",
+            "com.sec.", "com.miui.", "com.huawei.", "com.oplus.", "com.vivo.",
+            "com.xiaomi.", "com.mediatek.", "com.samsung."
+        ]);
+
+        const apps = [...new Set(
+            (raw ?? "").split("\n")
+                .map(l => l.trim())
+                .filter(p => p.includes(".") && p.length > 4 && !p.includes("/")
+                    && !skip.some(s => p.startsWith(s)))
+        )].sort();
+
+        const dl = document.getElementById("app-list");
+        dl.innerHTML = "";
+        apps.forEach(a => {
+            const opt = document.createElement("option");
+            opt.value = a;
+            dl.appendChild(opt);
+        });
+        document.getElementById("app-count").textContent   = `${apps.length} apps found`;
+        document.getElementById("target-status").innerHTML =
+            `<i class="fa-solid fa-check text-green-500 mr-1"></i>SCAN COMPLETE`;
+        Terminal.log(`Found ${apps.length} non-system packages.`, "ok");
+        icon.classList.remove("fa-spin");
+    },
+
+    lockTarget() {
+        const pkg = document.getElementById("pkg-input").value.trim();
+        if (pkg.length < 4) return;
+        AppState.target = pkg;
+        document.getElementById("target-status").innerHTML =
+            `<i class="fa-solid fa-lock text-green-500 mr-1"></i>LOCKED`;
+        document.getElementById("target-status").className =
+            "text-green-500 font-bold text-[9px]";
+        document.getElementById("info-path").textContent = `/data/data/${pkg}`;
+        Terminal.log(`Target acquired: ${pkg}`, "ok");
+    },
+
+    async inject() {
+        const pkg = AppState.target || document.getElementById("pkg-input").value.trim();
+        if (!pkg) { alert("Select or type a package name first!"); return; }
+        AppState.target = pkg;
+        this.switchTab("term");
+        Terminal.log(`Preparing payload for ${pkg}...`, "sys");
+
+        if (AppState.config.target_package !== pkg) {
+            AppState.config.target_package = pkg;
+            const json   = JSON.stringify(AppState.config, null, 2).replace(/"/g, '\\"');
+            await Bridge.godRun(`printf '%s' "${json}" > ${CONFIG_PATH} && chmod 644 ${CONFIG_PATH}`);
+            Terminal.log("Config updated with target package.", "cfg");
+        }
+
+        await Bridge.godRun(`am force-stop "${pkg}"`);
+        await Bridge.godRun(`monkey -p "${pkg}" -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1`);
+        Terminal.log("App restarted — Zygisk will hook on next launch.", "ok");
+    },
+
+    async killApp() {
+        const pkg = AppState.target;
+        if (!pkg) { alert("No target locked."); return; }
+        await Bridge.godRun(`am force-stop "${pkg}"`);
+        Terminal.log(`Process killed: ${pkg}`, "ok");
+    },
+
+    async wipeApp() {
+        const pkg = AppState.target;
+        if (!pkg) { alert("No target locked."); return; }
+        if (!confirm(`Wipe all data for ${pkg}?`)) return;
+        await Bridge.godRun(`pm clear "${pkg}"`);
+        Terminal.log(`Data wiped: ${pkg}`, "ok");
+    },
+
+    async pull(fileName) {
+        const pkg = AppState.target || document.getElementById("pkg-input").value.trim();
+        if (!pkg) { alert("Select target first!"); return; }
+        this.switchTab("term");
+        const outDir = AppState.config.output_dir || "/sdcard/Eaquel";
+        const src    = `${outDir}/${fileName}`;
+        const dest   = `/sdcard/Download/EaquelDumps`;
+        Terminal.log(`Extracting ${fileName} from ${outDir}...`, "sys");
+        const cmd = `
+            if [ -f "${src}" ]; then
+                mkdir -p ${dest}
+                cp "${src}" "${dest}/${pkg}_${fileName}"
+                chmod 644 "${dest}/${pkg}_${fileName}"
+                echo "[OK] Saved to ${dest}/${pkg}_${fileName}"
+            else
+                echo "[ERR] Not found: ${src} — Has Zygisk dumped yet?"
+            fi
+        `;
+        const res = await Bridge.godRun(cmd);
+        Terminal.log(res, res.includes("[ERR]") ? "err" : "ok");
+    },
+
+    async pullAll() {
+        for (const f of ["dump.cs", "dump.h", "dump.js"]) await this.pull(f);
+    },
+
+    async pullApk() {
+        const pkg = AppState.target || document.getElementById("pkg-input").value.trim();
+        if (!pkg) { alert("Select target first!"); return; }
+        this.switchTab("term");
+        Terminal.log(`Locating base APK for ${pkg}...`, "sys");
+        const pathOut  = await Bridge.godRun(`pm path ${pkg}`);
+        const baseLine = pathOut.split("\n").find(l => l.includes("base.apk"));
+        if (baseLine) {
+            const apkPath = baseLine.replace(/package:/g, "").trim();
+            const dest    = `/sdcard/Download/EaquelDumps`;
+            await Bridge.godRun(`mkdir -p ${dest} && cp "${apkPath}" "${dest}/${pkg}_base.apk" && chmod 644 "${dest}/${pkg}_base.apk"`);
+            Terminal.log(`[OK] Base APK → ${dest}/${pkg}_base.apk`, "ok");
+        } else {
+            Terminal.log(`[ERR] Could not locate base.apk for ${pkg}`, "err");
+        }
+    }
+};
+
+// ── LOGCAT POLLER ──────────────────────────────────────────────────────────
+setInterval(async () => {
+    if (!AppState.root) return;
+    const out = await Bridge.run("logcat -d -s Eaquel:V | tail -n 5 && logcat -c -s Eaquel:V");
+    if (out && out.length > 5 && !out.includes("not found")) {
+        out.trim().split("\n").forEach(line => Terminal.log(`[IL2CPP] ${line.trim()}`, "zg"));
+    }
+}, 2000);
+
+window.onload = () => Core.boot();
+</script>
+</body>
+</html>

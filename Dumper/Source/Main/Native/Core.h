@@ -3,6 +3,16 @@
 #include <android/log.h>
 #include <cstddef>
 #include <cstdint>
+#include <cinttypes>
+#include <cstring>
+#include <optional>
+#include <array>
+#include <string>
+#include <string_view>
+#include <fstream>
+#include <sstream>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #define LOG_TAG "Eaquel"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
@@ -118,10 +128,10 @@ inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_NOT_NULLABLE_VALUE_
 inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_DEFAULT_CONSTRUCTOR_CONSTRAINT     = 0x10;
 inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_SPECIAL_CONSTRAINT_MASK            = 0x1C;
 
-inline constexpr uint32_t ASSEMBLYREF_FULL_PUBLIC_KEY_FLAG                  = 0x00000001;
-inline constexpr uint32_t ASSEMBLYREF_RETARGETABLE_FLAG                     = 0x00000100;
-inline constexpr uint32_t ASSEMBLYREF_ENABLEJITCOMPILE_TRACKING_FLAG        = 0x00008000;
-inline constexpr uint32_t ASSEMBLYREF_DISABLEJITCOMPILE_OPTIMIZER_FLAG      = 0x00004000;
+inline constexpr uint32_t ASSEMBLYREF_FULL_PUBLIC_KEY_FLAG             = 0x00000001;
+inline constexpr uint32_t ASSEMBLYREF_RETARGETABLE_FLAG                = 0x00000100;
+inline constexpr uint32_t ASSEMBLYREF_ENABLEJITCOMPILE_TRACKING_FLAG   = 0x00008000;
+inline constexpr uint32_t ASSEMBLYREF_DISABLEJITCOMPILE_OPTIMIZER_FLAG = 0x00004000;
 
 using Il2CppChar            = uint16_t;
 using il2cpp_array_size_t   = uintptr_t;
@@ -155,24 +165,16 @@ struct Il2CppCustomAttrInfo;
 
 using Il2CppVTable = Il2CppClass;
 
-using Il2CppMethodPointer              = void (*)();
-using il2cpp_register_object_callback  = void (*)(Il2CppObject** arr, int size, void* userdata);
+using Il2CppMethodPointer                 = void (*)();
+using il2cpp_register_object_callback     = void (*)(Il2CppObject** arr, int size, void* userdata);
 using il2cpp_liveness_reallocate_callback = void* (*)(void* ptr, size_t size, void* userdata);
-using Il2CppFrameWalkFunc              = void (*)(const Il2CppStackFrameInfo* info, void* user_data);
-using Il2CppBacktraceFunc              = size_t (*)(Il2CppMethodPointer* buffer, size_t maxSize);
-using Il2CppSetFindPlugInCallback      = const Il2CppNativeChar* (*)(const Il2CppNativeChar*);
-using Il2CppLogCallback                = void (*)(const char*);
+using Il2CppFrameWalkFunc                 = void (*)(const Il2CppStackFrameInfo* info, void* user_data);
+using Il2CppBacktraceFunc                 = size_t (*)(Il2CppMethodPointer* buffer, size_t maxSize);
+using Il2CppSetFindPlugInCallback         = const Il2CppNativeChar* (*)(const Il2CppNativeChar*);
+using Il2CppLogCallback                   = void (*)(const char*);
 
-enum class Il2CppRuntimeUnhandledExceptionPolicy : int {
-    Legacy  = 0,
-    Current = 1
-};
-
-enum class Il2CppGCMode : int {
-    Disabled = 0,
-    Enabled  = 1,
-    Manual   = 2
-};
+enum class Il2CppRuntimeUnhandledExceptionPolicy : int { Legacy = 0, Current = 1 };
+enum class Il2CppGCMode : int                          { Disabled = 0, Enabled = 1, Manual = 2 };
 
 enum Il2CppStat {
     IL2CPP_STAT_NEW_OBJECT_COUNT,
@@ -186,59 +188,41 @@ enum Il2CppStat {
 };
 
 enum Il2CppTypeEnum : uint8_t {
-    IL2CPP_TYPE_END        = 0x00,
-    IL2CPP_TYPE_VOID       = 0x01,
-    IL2CPP_TYPE_BOOLEAN    = 0x02,
-    IL2CPP_TYPE_CHAR       = 0x03,
-    IL2CPP_TYPE_I1         = 0x04,
-    IL2CPP_TYPE_U1         = 0x05,
-    IL2CPP_TYPE_I2         = 0x06,
-    IL2CPP_TYPE_U2         = 0x07,
-    IL2CPP_TYPE_I4         = 0x08,
-    IL2CPP_TYPE_U4         = 0x09,
-    IL2CPP_TYPE_I8         = 0x0a,
-    IL2CPP_TYPE_U8         = 0x0b,
-    IL2CPP_TYPE_R4         = 0x0c,
-    IL2CPP_TYPE_R8         = 0x0d,
-    IL2CPP_TYPE_STRING     = 0x0e,
-    IL2CPP_TYPE_PTR        = 0x0f,
-    IL2CPP_TYPE_BYREF      = 0x10,
-    IL2CPP_TYPE_VALUETYPE  = 0x11,
-    IL2CPP_TYPE_CLASS      = 0x12,
-    IL2CPP_TYPE_VAR        = 0x13,
-    IL2CPP_TYPE_ARRAY      = 0x14,
-    IL2CPP_TYPE_GENERICINST    = 0x15,
-    IL2CPP_TYPE_TYPEDBYREF     = 0x16,
-    IL2CPP_TYPE_I              = 0x18,
-    IL2CPP_TYPE_U              = 0x19,
-    IL2CPP_TYPE_FNPTR          = 0x1b,
-    IL2CPP_TYPE_OBJECT         = 0x1c,
-    IL2CPP_TYPE_SZARRAY        = 0x1d,
-    IL2CPP_TYPE_MVAR           = 0x1e,
-    IL2CPP_TYPE_CMOD_REQD      = 0x1f,
-    IL2CPP_TYPE_CMOD_OPT       = 0x20,
-    IL2CPP_TYPE_INTERNAL       = 0x21,
-    IL2CPP_TYPE_MODIFIER       = 0x40,
-    IL2CPP_TYPE_SENTINEL       = 0x41,
-    IL2CPP_TYPE_PINNED         = 0x45,
-    IL2CPP_TYPE_ENUM           = 0x55,
+    IL2CPP_TYPE_END        = 0x00, IL2CPP_TYPE_VOID       = 0x01,
+    IL2CPP_TYPE_BOOLEAN    = 0x02, IL2CPP_TYPE_CHAR       = 0x03,
+    IL2CPP_TYPE_I1         = 0x04, IL2CPP_TYPE_U1         = 0x05,
+    IL2CPP_TYPE_I2         = 0x06, IL2CPP_TYPE_U2         = 0x07,
+    IL2CPP_TYPE_I4         = 0x08, IL2CPP_TYPE_U4         = 0x09,
+    IL2CPP_TYPE_I8         = 0x0a, IL2CPP_TYPE_U8         = 0x0b,
+    IL2CPP_TYPE_R4         = 0x0c, IL2CPP_TYPE_R8         = 0x0d,
+    IL2CPP_TYPE_STRING     = 0x0e, IL2CPP_TYPE_PTR        = 0x0f,
+    IL2CPP_TYPE_BYREF      = 0x10, IL2CPP_TYPE_VALUETYPE  = 0x11,
+    IL2CPP_TYPE_CLASS      = 0x12, IL2CPP_TYPE_VAR        = 0x13,
+    IL2CPP_TYPE_ARRAY      = 0x14, IL2CPP_TYPE_GENERICINST = 0x15,
+    IL2CPP_TYPE_TYPEDBYREF = 0x16, IL2CPP_TYPE_I          = 0x18,
+    IL2CPP_TYPE_U          = 0x19, IL2CPP_TYPE_FNPTR      = 0x1b,
+    IL2CPP_TYPE_OBJECT     = 0x1c, IL2CPP_TYPE_SZARRAY    = 0x1d,
+    IL2CPP_TYPE_MVAR       = 0x1e, IL2CPP_TYPE_CMOD_REQD  = 0x1f,
+    IL2CPP_TYPE_CMOD_OPT   = 0x20, IL2CPP_TYPE_INTERNAL   = 0x21,
+    IL2CPP_TYPE_MODIFIER   = 0x40, IL2CPP_TYPE_SENTINEL   = 0x41,
+    IL2CPP_TYPE_PINNED     = 0x45, IL2CPP_TYPE_ENUM       = 0x55,
     IL2CPP_TYPE_IL2CPP_TYPE_INDEX = 0xff
 };
 
 struct Il2CppType {
     union {
-        void*                dummy;
-        TypeDefinitionIndex  klassIndex;
-        const Il2CppType*    type;
-        Il2CppArrayType*     array;
+        void*                 dummy;
+        TypeDefinitionIndex   klassIndex;
+        const Il2CppType*     type;
+        Il2CppArrayType*      array;
         GenericParameterIndex genericParameterIndex;
-        Il2CppGenericClass*  generic_class;
+        Il2CppGenericClass*   generic_class;
     } data;
-    unsigned int attrs   : 16;
-    Il2CppTypeEnum type  : 8;
-    unsigned int num_mods: 6;
-    unsigned int byref   : 1;
-    unsigned int pinned  : 1;
+    unsigned int attrs    : 16;
+    Il2CppTypeEnum type   : 8;
+    unsigned int num_mods : 6;
+    unsigned int byref    : 1;
+    unsigned int pinned   : 1;
 };
 
 struct MethodInfo {
@@ -246,10 +230,7 @@ struct MethodInfo {
 };
 
 struct Il2CppObject {
-    union {
-        Il2CppClass*  klass;
-        Il2CppVTable* vtable;
-    };
+    union { Il2CppClass* klass; Il2CppVTable* vtable; };
     MonitorData* monitor;
 };
 
@@ -479,6 +460,164 @@ DO_API(void,              il2cpp_set_default_thread_affinity, (int64_t affinity_
 
 #endif
 
-void hack_prepare(const char* game_data_dir, void* data, size_t length);
-void il2cpp_api_init(void* handle);
-void il2cpp_dump(const char* outDir);
+namespace scanner {
+
+struct PatternByte { uint8_t value; bool is_wildcard; };
+
+template<size_t N>
+using Pattern = std::array<PatternByte, N>;
+
+namespace arm64_prologue {
+inline constexpr auto kDomainGet = Pattern<8>{{
+    {0xFF,false},{0x43,false},{0x00,false},{0xD1,false},
+    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
+}};
+inline constexpr auto kDomainGetAssemblies = Pattern<12>{{
+    {0xFF,false},{0x83,false},{0x00,false},{0xD1,false},
+    {0xF8,false},{0x5F,false},{0x00,false},{0xA9,false},
+    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
+}};
+inline constexpr auto kImageGetClass = Pattern<8>{{
+    {0xFF,false},{0x43,false},{0x01,false},{0xD1,false},
+    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
+}};
+inline constexpr auto kThreadAttach = Pattern<8>{{
+    {0xFF,false},{0x03,false},{0x01,false},{0xD1,false},
+    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
+}};
+inline constexpr auto kIsVmThread = Pattern<8>{{
+    {0xE8,false},{0x03,false},{0x00,false},{0xAA,false},
+    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
+}};
+}
+
+struct MappedRegion { uintptr_t base; size_t size; };
+
+struct ResolvedSymbols {
+    uintptr_t domain_get            = 0;
+    uintptr_t domain_get_assemblies = 0;
+    uintptr_t image_get_class       = 0;
+    uintptr_t thread_attach         = 0;
+    uintptr_t is_vm_thread          = 0;
+};
+
+[[nodiscard]] static std::optional<MappedRegion> resolveExecutableRegion(uintptr_t base) {
+    constexpr size_t kMaxScanSize = 0x8000000;
+    auto page = static_cast<uintptr_t>(getpagesize());
+    return MappedRegion{ base & ~(page - 1), kMaxScanSize };
+}
+
+template<size_t N>
+[[nodiscard]] static std::optional<uintptr_t> scanPattern(
+    const MappedRegion& region, const Pattern<N>& pattern, size_t alignment = 4
+) {
+    auto* mem   = reinterpret_cast<const uint8_t*>(region.base);
+    auto  limit = region.size - N;
+    for (size_t off = 0; off < limit; off += alignment) {
+        bool matched = true;
+        for (size_t i = 0; i < N; ++i) {
+            if (!pattern[i].is_wildcard && mem[off + i] != pattern[i].value) {
+                matched = false; break;
+            }
+        }
+        if (matched) return region.base + off;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] static bool isReadableAddress(uintptr_t address) {
+    if (address == 0) return false;
+    auto page    = static_cast<uintptr_t>(getpagesize());
+    auto aligned = reinterpret_cast<void*>(address & ~(page - 1));
+    return msync(aligned, page, MS_ASYNC) == 0;
+}
+
+[[nodiscard]] static ResolvedSymbols scanAllSymbols(uintptr_t library_base) {
+    auto region = resolveExecutableRegion(library_base);
+    if (!region) { LOGE("scanner: failed to resolve region at 0x%" PRIxPTR, library_base); return {}; }
+    ResolvedSymbols s;
+    auto try_scan = [&](auto& field, const auto& pat, const char* name) {
+        if (auto a = scanPattern(*region, pat)) {
+            field = *a; LOGI("scanner: %s -> 0x%" PRIxPTR, name, *a);
+        } else { LOGW("scanner: %s pattern not found", name); }
+    };
+    try_scan(s.domain_get,            arm64_prologue::kDomainGet,           "il2cpp_domain_get");
+    try_scan(s.domain_get_assemblies, arm64_prologue::kDomainGetAssemblies, "il2cpp_domain_get_assemblies");
+    try_scan(s.image_get_class,       arm64_prologue::kImageGetClass,       "il2cpp_image_get_class");
+    try_scan(s.thread_attach,         arm64_prologue::kThreadAttach,        "il2cpp_thread_attach");
+    try_scan(s.is_vm_thread,          arm64_prologue::kIsVmThread,          "il2cpp_is_vm_thread");
+    return s;
+}
+
+}
+
+namespace config {
+
+inline constexpr std::string_view kConfigPath     = "/data/local/tmp/eaquel_config.json";
+inline constexpr std::string_view kFallbackOutput = "/sdcard/Eaquel";
+
+struct DumperConfig {
+    std::string target_package;
+    std::string output_dir;
+    bool        generate_cpp_header   = true;
+    bool        generate_frida_script = true;
+};
+
+[[nodiscard]] static std::optional<std::string> extractJsonString(
+    const std::string& json, std::string_view key
+) {
+    auto search = std::string("\"") + std::string(key) + "\"";
+    auto kp     = json.find(search);
+    if (kp == std::string::npos) return std::nullopt;
+    auto cp = json.find(':', kp + search.size());
+    if (cp == std::string::npos) return std::nullopt;
+    auto qo = json.find('"', cp + 1);
+    if (qo == std::string::npos) return std::nullopt;
+    auto qc = json.find('"', qo + 1);
+    if (qc == std::string::npos) return std::nullopt;
+    return json.substr(qo + 1, qc - qo - 1);
+}
+
+[[nodiscard]] static bool extractJsonBool(
+    const std::string& json, std::string_view key, bool def
+) {
+    auto search = std::string("\"") + std::string(key) + "\"";
+    auto kp     = json.find(search);
+    if (kp == std::string::npos) return def;
+    auto cp = json.find(':', kp + search.size());
+    if (cp == std::string::npos) return def;
+    auto vs = json.find_first_not_of(" \t\n\r", cp + 1);
+    if (vs == std::string::npos) return def;
+    return json.substr(vs, 4) == "true";
+}
+
+[[nodiscard]] static DumperConfig loadConfig() {
+    DumperConfig cfg;
+    cfg.output_dir = std::string(kFallbackOutput);
+    std::ifstream file(kConfigPath.data());
+    if (!file.is_open()) {
+        LOGW("config: %s not found, using defaults", kConfigPath.data());
+        return cfg;
+    }
+    std::ostringstream buf;
+    buf << file.rdbuf();
+    auto json = buf.str();
+    if (auto v = extractJsonString(json, "target_package")) {
+        cfg.target_package = *v;
+        LOGI("config: target_package = %s", cfg.target_package.c_str());
+    } else { LOGW("config: target_package missing"); }
+    if (auto v = extractJsonString(json, "output_dir")) {
+        cfg.output_dir = *v;
+        LOGI("config: output_dir = %s", cfg.output_dir.c_str());
+    }
+    cfg.generate_cpp_header   = extractJsonBool(json, "generate_cpp_header",   true);
+    cfg.generate_frida_script = extractJsonBool(json, "generate_frida_script", true);
+    LOGI("config: cpp_header=%d frida_script=%d", cfg.generate_cpp_header, cfg.generate_frida_script);
+    return cfg;
+}
+
+[[nodiscard]] static bool isTargetPackage(const DumperConfig& cfg, std::string_view pkg) {
+    return !cfg.target_package.empty() && cfg.target_package == pkg;
+}
+
+}
