@@ -124,9 +124,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name:              "eaquel-dumper-${{ github.event.inputs.build_variant }}-${{ github.run_number }}"
-          path:              "out/*.zip"
+          path:              "out/skeleton_${{ github.event.inputs.build_variant }}/"
           retention-days:    14
-          compression-level: 0
+          compression-level: 9
 
       - name: "📋  Build Summary"
         run: |

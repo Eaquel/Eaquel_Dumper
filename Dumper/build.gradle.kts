@@ -115,40 +115,8 @@ androidComponents {
             }
         }
 
-        val zipTmpDir = file("${rootProject.buildDir}/zip_staging")
-        val zipFinalPath = outDir.resolve(zipFileName)
-
-        val zipTask = tasks.register<Zip>("zip$variantCapped") {
-            dependsOn(prepareTask)
-            from(skeletonDir)
-            archiveFileName.set(zipFileName)
-            destinationDirectory.set(zipTmpDir)
-            doLast {
-                zipTmpDir.resolve(zipFileName).copyTo(zipFinalPath, overwrite = true)
-            }
-        }
-
         tasks.matching { it.name == "assemble$variantCapped" }.configureEach {
-            finalizedBy(zipTask)
-        }
-
-        tasks.register<Exec>("push$variantCapped") {
-            dependsOn(zipTask)
-            workingDir(outDir)
-            commandLine("adb", "push", zipFileName, "/data/local/tmp/")
-        }
-
-        tasks.register<Exec>("flash$variantCapped") {
-            dependsOn("push$variantCapped")
-            commandLine(
-                "adb", "shell", "su", "-c",
-                "magisk --install-module /data/local/tmp/$zipFileName"
-            )
-        }
-
-        tasks.register<Exec>("flashAndReboot$variantCapped") {
-            dependsOn("flash$variantCapped")
-            commandLine("adb", "shell", "reboot")
+            finalizedBy(prepareTask)
         }
     }
 }
