@@ -1,1460 +1,315 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="tr">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Eaquel Dumper</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
-<style>
-:root {
-  --red:       #ff0000;
-  --red-glow:  rgba(255,0,0,0.55);
-  --red-dim:   rgba(255,0,0,0.10);
-  --bg:        #040000;
-  --panel:     #080000;
-  --panel2:    #0d0000;
-  --border:    rgba(255,0,0,0.22);
-  --green:     #10b981;
-  --amber:     #f59e0b;
-  --blue:      #38bdf8;
-  --purple:    #a78bfa;
-}
-
-* { -webkit-tap-highlight-color: transparent; box-sizing: border-box; outline: none; }
-
-body {
-  background: var(--bg);
-  color: #d1d5db;
-  font-family: 'JetBrains Mono', monospace;
-  overflow: hidden; margin: 0; padding: 0;
-  display: flex; flex-direction: column;
-  height: 100dvh; width: 100vw;
-}
-
-body::before {
-  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  background-image:
-    linear-gradient(rgba(255,0,0,0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,0,0,0.03) 1px, transparent 1px);
-  background-size: 28px 28px;
-}
-
-::-webkit-scrollbar { width: 3px; height: 3px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,0,0,0.3); border-radius: 4px; }
-
-.cyber { font-family: 'Orbitron', sans-serif; }
-.glow  { text-shadow: 0 0 14px var(--red-glow); }
-
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: inset 0 0 18px rgba(255,0,0,0.02), 0 6px 20px rgba(0,0,0,0.7);
-}
-
-.section-title {
-  font-size: 0.6rem; font-weight: 800; letter-spacing: 0.14em;
-  text-transform: uppercase; padding-bottom: 10px;
-  border-bottom: 1px solid rgba(255,0,0,0.18);
-  margin-bottom: 14px; color: #6b7280;
-}
-
-.btn-primary {
-  background: linear-gradient(135deg, #3d0000 0%, #cc0000 60%, #ff1a1a 100%);
-  color: #fff; font-weight: 800; border-radius: 10px; border: none;
-  box-shadow: 0 0 18px var(--red-glow); transition: all 0.12s;
-}
-.btn-primary:active { transform: scale(0.95); box-shadow: 0 0 6px var(--red-glow); }
-
-.btn-ghost {
-  background: transparent; border: 1px solid var(--border);
-  color: #ff4444; border-radius: 10px; transition: all 0.12s;
-}
-.btn-ghost:active { background: rgba(255,0,0,0.12); transform: scale(0.95); }
-
-.btn-green  { background: rgba(16,185,129,0.10); border: 1px solid rgba(16,185,129,0.35); color: #10b981; border-radius: 10px; transition: all 0.12s; }
-.btn-green:active  { background: rgba(16,185,129,0.22); transform: scale(0.95); }
-.btn-blue   { background: rgba(56,189,248,0.10); border: 1px solid rgba(56,189,248,0.30); color: #38bdf8; border-radius: 10px; transition: all 0.12s; }
-.btn-blue:active   { background: rgba(56,189,248,0.20); transform: scale(0.95); }
-.btn-purple { background: rgba(167,139,250,0.10); border: 1px solid rgba(167,139,250,0.30); color: #a78bfa; border-radius: 10px; transition: all 0.12s; }
-.btn-purple:active { background: rgba(167,139,250,0.20); transform: scale(0.95); }
-.btn-amber  { background: rgba(245,158,11,0.10); border: 1px solid rgba(245,158,11,0.30); color: #fbbf24; border-radius: 10px; transition: all 0.12s; }
-.btn-amber:active  { background: rgba(245,158,11,0.20); transform: scale(0.95); }
-
-.input-field {
-  width: 100%; background: #050000;
-  border: 1.5px solid rgba(255,0,0,0.25);
-  color: #fff; padding: 10px 14px;
-  border-radius: 9px; font-family: 'JetBrains Mono', monospace;
-  font-size: 0.78rem; transition: border-color 0.15s;
-}
-.input-field:focus { border-color: #ff0000; box-shadow: 0 0 0 2px rgba(255,0,0,0.10); }
-.input-field::placeholder { color: #374151; }
-
-.toggle-wrap {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px;
-  background: #050000; border: 1.5px solid rgba(255,0,0,0.18);
-  border-radius: 9px;
-}
-.toggle-label { font-size: 0.7rem; color: #9ca3af; font-weight: 700; }
-.toggle-input { appearance: none; width: 38px; height: 20px; background: #1f2937;
-  border-radius: 999px; position: relative; cursor: pointer; transition: background 0.2s; flex-shrink:0; }
-.toggle-input:checked { background: #dc2626; }
-.toggle-input::after {
-  content: ''; position: absolute; top: 2px; left: 2px;
-  width: 16px; height: 16px; background: #fff;
-  border-radius: 50%; transition: transform 0.2s;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
-}
-.toggle-input:checked::after { transform: translateX(18px); }
-
-.bottom-nav {
-  background: #000;
-  border-top: 1px solid var(--border);
-  display: flex; justify-content: space-around;
-  padding: 10px 0;
-  padding-bottom: calc(10px + env(safe-area-inset-bottom));
-  flex-shrink: 0;
-}
-.nav-btn {
-  color: #374151; display: flex; flex-direction: column; align-items: center;
-  font-size: 0.58rem; gap: 4px; font-weight: 800; letter-spacing: 0.05em;
-  transition: color 0.15s; cursor: pointer; padding: 0 10px;
-}
-.nav-btn.active { color: var(--red); text-shadow: 0 0 10px var(--red-glow); }
-.nav-btn i { font-size: 1.15rem; }
-
-.term-row { margin-bottom: 3px; word-break: break-all; line-height: 1.5; }
-.t-time { color: #374151; font-size: 0.58rem; margin-right: 6px; }
-.t-sys  { color: #3b82f6; }
-.t-ok   { color: #10b981; }
-.t-err  { color: #ef4444; font-weight: 700; }
-.t-zg   { color: #a855f7; }
-.t-data { color: #9ca3af; }
-.t-cfg  { color: #f59e0b; }
-
-/* ── SPLASH ── */
-#splash {
-  position: fixed; inset: 0; z-index: 9999;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  background: #000;
-  transition: opacity 0.5s ease;
-  gap: 0;
-}
-
-#splash-scanline {
-  position: absolute; inset: 0; pointer-events: none;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(255,0,0,0.015) 2px,
-    rgba(255,0,0,0.015) 4px
-  );
-  animation: scanline-move 8s linear infinite;
-}
-@keyframes scanline-move {
-  0%   { background-position: 0 0; }
-  100% { background-position: 0 100px; }
-}
-
-#splash-ring {
-  position: relative; width: 110px; height: 110px;
-  display: flex; align-items: center; justify-content: center;
-  margin-bottom: 20px;
-}
-#splash-ring svg {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  animation: ring-spin 2.5s linear infinite;
-}
-@keyframes ring-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
-#splash-ring-inner {
-  position: absolute; inset: 12px;
-  border-radius: 50%;
-  border: 1px solid rgba(255,0,0,0.2);
-  animation: ring-pulse 1.8s ease-in-out infinite;
-}
-@keyframes ring-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(255,0,0,0); }
-  50%       { box-shadow: 0 0 18px 4px rgba(255,0,0,0.3); }
-}
-
-.splash-icon {
-  font-size: 2.8rem; color: #ff0000;
-  text-shadow: 0 0 30px rgba(255,0,0,0.9), 0 0 60px rgba(255,0,0,0.4);
-  animation: icon-beat 1.8s ease-in-out infinite;
-  z-index: 1;
-}
-@keyframes icon-beat {
-  0%, 100% { transform: scale(1);    filter: brightness(1); }
-  50%       { transform: scale(1.08); filter: brightness(1.4); }
-}
-
-#splash-title {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 2rem; font-weight: 900; letter-spacing: 0.18em;
-  color: #fff;
-  text-shadow: 0 0 20px rgba(255,0,0,0.6);
-  animation: title-flicker 4s ease-in-out infinite;
-}
-@keyframes title-flicker {
-  0%, 95%, 100% { opacity: 1; }
-  96%           { opacity: 0.7; }
-  97%           { opacity: 1; }
-  98%           { opacity: 0.5; }
-}
-
-#splash-sub {
-  font-size: 0.6rem; color: #4b0000; letter-spacing: 0.25em;
-  margin-top: 4px; margin-bottom: 28px;
-}
-
-/* Boot step list */
-#splash-steps {
-  display: flex; flex-direction: column; gap: 6px;
-  width: 260px; margin-bottom: 20px;
-}
-.boot-step {
-  display: flex; align-items: center; gap: 10px;
-  font-size: 0.62rem; color: #374151; letter-spacing: 0.04em;
-  transition: color 0.3s;
-}
-.boot-step.done  { color: #10b981; }
-.boot-step.active { color: #fff; }
-.boot-step.fail  { color: #ef4444; }
-.step-icon { width: 16px; text-align: center; flex-shrink: 0; font-size: 0.65rem; }
-.step-label { flex: 1; }
-.step-status { font-size: 0.6rem; font-weight: 800; flex-shrink: 0; }
-
-/* Progress bar */
-#splash-progress-wrap {
-  width: 260px; height: 3px;
-  background: rgba(255,0,0,0.1);
-  border-radius: 99px; overflow: hidden;
-  margin-bottom: 16px;
-}
-#splash-progress-bar {
-  height: 100%; width: 0%;
-  background: linear-gradient(90deg, #7f0000, #ff0000);
-  border-radius: 99px;
-  box-shadow: 0 0 8px rgba(255,0,0,0.6);
-  transition: width 0.4s ease;
-}
-
-#splash-status {
-  font-size: 0.62rem; color: #6b7280; letter-spacing: 0.12em;
-  min-height: 18px; text-align: center;
-}
-#splash-attempt {
-  font-size: 0.55rem; color: #374151; margin-top: 4px;
-  letter-spacing: 0.08em; min-height: 16px; text-align: center;
-}
-
-#splash-retry-btn {
-  margin-top: 18px;
-  display: none;
-  background: transparent;
-  border: 1px solid rgba(255,0,0,0.4);
-  color: #ff4444;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.68rem; font-weight: 800;
-  letter-spacing: 0.1em;
-  padding: 10px 28px; border-radius: 9px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-#splash-retry-btn:active { background: rgba(255,0,0,0.1); transform: scale(0.96); }
-
-#splash-err-detail {
-  display: none;
-  margin-top: 12px;
-  font-size: 0.55rem; color: #4b5563;
-  text-align: center; max-width: 280px;
-  line-height: 1.7; letter-spacing: 0.03em;
-}
-
-.badge-root-off { background: rgba(127,0,0,0.2); border: 1px solid #7f1d1d; color: #f87171; }
-.badge-root-on  { background: rgba(16,185,129,0.12); border: 1px solid #065f46; color: #34d399; }
-
-.hide { display: none !important; }
-
-.status-dot {
-  display: inline-block; width: 7px; height: 7px;
-  border-radius: 50%; background: #6b7280;
-}
-.status-dot.on  { background: #10b981; box-shadow: 0 0 6px #10b981; }
-.status-dot.off { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
-
-@keyframes pulse-red {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.35; }
-}
-.pulse-red { animation: pulse-red 1.4s ease-in-out infinite; }
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.fade-in { animation: fadeIn 0.28s ease forwards; }
-
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(14px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.slide-up { animation: slideUp 0.3s ease forwards; }
-
-/* ── APP CARD ── */
-.app-card {
-  display: flex; align-items: center; gap: 12px;
-  padding: 11px 13px;
-  background: #050000;
-  border: 1.5px solid rgba(255,0,0,0.15);
-  border-radius: 11px;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, transform 0.12s;
-  position: relative; overflow: hidden;
-}
-.app-card::before {
-  content: ''; position: absolute; inset: 0;
-  background: linear-gradient(90deg, rgba(255,0,0,0.04) 0%, transparent 100%);
-  opacity: 0; transition: opacity 0.15s;
-}
-.app-card:active { background: rgba(255,0,0,0.08); transform: scale(0.985); }
-.app-card.selected {
-  border-color: #ff0000;
-  background: rgba(255,0,0,0.07);
-  box-shadow: 0 0 14px rgba(255,0,0,0.2);
-}
-.app-card.selected::before { opacity: 1; }
-
-.app-icon-wrap {
-  width: 42px; height: 42px; border-radius: 10px;
-  background: linear-gradient(135deg, #1a0000, #2d0000);
-  border: 1px solid rgba(255,0,0,0.2);
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; overflow: hidden; font-size: 1.1rem;
-}
-.app-icon-wrap img { width: 100%; height: 100%; object-fit: cover; border-radius: 9px; }
-
-.app-name {
-  font-size: 0.72rem; font-weight: 700; color: #e5e7eb;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;
-}
-.app-pkg {
-  font-size: 0.58rem; color: #4b5563; margin-top: 2px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;
-}
-.app-sel-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: #ff0000; box-shadow: 0 0 6px #ff0000;
-  margin-left: auto; flex-shrink: 0; display: none;
-}
-.app-card.selected .app-sel-dot { display: block; }
-
-/* ── SEARCH ── */
-.search-wrap { position: relative; }
-.search-wrap i {
-  position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
-  color: #4b5563; font-size: 0.75rem; pointer-events: none;
-}
-.search-input {
-  width: 100%; background: #050000;
-  border: 1.5px solid rgba(255,0,0,0.2);
-  color: #fff; padding: 9px 12px 9px 30px;
-  border-radius: 9px; font-family: 'JetBrains Mono', monospace;
-  font-size: 0.72rem; transition: border-color 0.15s;
-}
-.search-input:focus { border-color: rgba(255,0,0,0.6); }
-.search-input::placeholder { color: #374151; }
-
-/* ── LOCKED TARGET BAR ── */
-.target-bar {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 13px;
-  background: rgba(255,0,0,0.06);
-  border: 1.5px solid rgba(255,0,0,0.3);
-  border-radius: 10px;
-  animation: slideUp 0.25s ease;
-}
-.target-bar .tb-icon {
-  width: 32px; height: 32px; border-radius: 8px;
-  background: #1a0000; border: 1px solid rgba(255,0,0,0.25);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 0.9rem; flex-shrink: 0; overflow: hidden;
-}
-.target-bar .tb-icon img { width: 100%; height: 100%; object-fit: cover; border-radius: 7px; }
-
-/* ── STAT CHIP ── */
-.stat-chip {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  background: #050000; border: 1px solid rgba(255,0,0,0.18);
-  border-radius: 10px; padding: 10px 8px; flex: 1;
-  transition: border-color 0.2s;
-}
-.stat-chip:hover { border-color: rgba(255,0,0,0.35); }
-.stat-chip .val { font-size: 1.1rem; font-weight: 800; color: #fff; font-family: 'Orbitron', sans-serif; }
-.stat-chip .lbl { font-size: 0.55rem; color: #6b7280; margin-top: 3px; letter-spacing: 0.08em; text-transform: uppercase; }
-
-/* ── EXTRACT CARD ── */
-.extract-card {
-  background: #050000; border: 1.5px solid rgba(255,0,0,0.15);
-  border-radius: 11px; padding: 13px;
-  display: flex; flex-direction: column; gap: 8px;
-  transition: border-color 0.2s;
-}
-.extract-card:hover { border-color: rgba(255,0,0,0.3); }
-.extract-card .ec-header { display: flex; align-items: center; gap: 9px; }
-.extract-card .ec-icon { font-size: 1.1rem; }
-.extract-card .ec-title { font-size: 0.72rem; font-weight: 700; color: #e5e7eb; }
-.extract-card .ec-desc  { font-size: 0.6rem; color: #4b5563; }
-.extract-card .ec-badge {
-  margin-left: auto; font-size: 0.55rem; font-weight: 800;
-  padding: 3px 8px; border-radius: 6px; letter-spacing: 0.08em;
-}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Eaquel Dumper</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700;800&family=Orbitron:wght@500;700;900&display=swap');
+        :root{--red:#ff0000;--glow:rgba(255,0,0,0.9);--panel:#080000;--border:rgba(255,0,0,0.55)}
+        *{box-sizing:border-box}body{font-family:'JetBrains Mono',monospace;background:#040000;color:#ddd;height:100dvh;overflow:hidden;margin:0}
+        .crt{position:relative;overflow:hidden}
+        .crt::before{content:'';position:fixed;inset:0;background:linear-gradient(rgba(255,0,0,0.05)1px,transparent 1px),linear-gradient(90deg,rgba(255,0,0,0.05)1px,transparent 1px);background-size:24px 24px;pointer-events:none;z-index:-1;animation:scanline 2.5s linear infinite}
+        .crt::after{content:'';position:fixed;inset:0;background:radial-gradient(circle at center,rgba(255,0,0,0.22) 20%,transparent 80%);pointer-events:none;z-index:-1;animation:flicker 2.5s infinite alternate}
+        @keyframes scanline{0%{background-position:0 0}100%{background-position:0 160px}}
+        @keyframes flicker{0%,100%{opacity:1}50%{opacity:0.82}}
+        .glow{text-shadow:0 0 30px var(--glow)}
+        .panel{background:var(--panel);border:1px solid var(--border);border-radius:22px;box-shadow:0 25px 50px rgba(255,0,0,0.25),inset 0 0 45px rgba(255,0,0,0.2)}
+        .card{transition:all .4s cubic-bezier(0.34,1.56,0.64,1)}
+        .card:hover{transform:scale(1.12) rotate(2deg);box-shadow:0 0 50px var(--glow)}
+        .btn-primary{background:linear-gradient(135deg,#3d0000,#ff1a1a);box-shadow:0 0 45px var(--glow)}
+        .btn-primary:active{transform:scale(0.85)}
+        .nav-btn{color:#888;transition:all .4s cubic-bezier(0.4,0,0.2,1)}
+        .nav-btn.active{color:#ff0000;text-shadow:0 0 30px var(--glow);transform:scale(1.3)}
+        .term{font-size:13.5px;line-height:1.7;font-family:'JetBrains Mono',monospace;background:#020000}
+    </style>
 </head>
-<body>
+<body class="crt flex flex-col">
 
-<!-- SPLASH -->
-<div id="splash">
-  <div id="splash-scanline"></div>
-
-  <div id="splash-ring">
-    <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="50" cy="50" r="46" stroke="rgba(255,0,0,0.15)" stroke-width="1.5"/>
-      <circle cx="50" cy="50" r="46" stroke="url(#rg)" stroke-width="1.5"
-              stroke-dasharray="72 216" stroke-linecap="round"/>
-      <defs>
-        <linearGradient id="rg" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#ff0000"/>
-          <stop offset="100%" stop-color="#7f0000"/>
-        </linearGradient>
-      </defs>
-    </svg>
-    <div id="splash-ring-inner"></div>
-    <i class="fa-solid fa-ghost splash-icon"></i>
-  </div>
-
-  <div id="splash-title">EAQUEL<span style="color:#ff0000;">.DUMP</span></div>
-  <div id="splash-sub">RUNTIME ELF ANALYSIS ENGINE</div>
-
-  <div id="splash-steps">
-    <div class="boot-step" id="step-bridge">
-      <span class="step-icon"><i class="fa-solid fa-circle-notch fa-spin"></i></span>
-      <span class="step-label">Detecting root bridge</span>
-      <span class="step-status" id="step-bridge-s">—</span>
+<header class="bg-black border-b border-red-900/80 px-6 py-5 flex items-center justify-between flex-shrink-0">
+    <div class="flex items-center gap-4">
+        <i class="fa-solid fa-ghost text-4xl text-red-600 glow"></i>
+        <div>
+            <h1 class="text-3xl font-black tracking-[5px] text-white">EAQUEL</h1>
+            <p class="text-xs text-red-500 font-bold tracking-[4px]">IL2CPP • ZYGISK v4</p>
+        </div>
     </div>
-    <div class="boot-step" id="step-root">
-      <span class="step-icon"><i class="fa-solid fa-minus"></i></span>
-      <span class="step-label">Verifying root access</span>
-      <span class="step-status" id="step-root-s">—</span>
+    <div id="root-badge" onclick="retryBoot()" class="px-7 py-2.5 rounded-3xl text-xs font-bold flex items-center gap-3 bg-red-950 text-red-400 cursor-pointer hover:bg-red-900">
+        <i class="fa-solid fa-circle animate-pulse"></i> ROOT KONTROL
     </div>
-    <div class="boot-step" id="step-cfg">
-      <span class="step-icon"><i class="fa-solid fa-minus"></i></span>
-      <span class="step-label">Loading configuration</span>
-      <span class="step-status" id="step-cfg-s">—</span>
-    </div>
-    <div class="boot-step" id="step-ready">
-      <span class="step-icon"><i class="fa-solid fa-minus"></i></span>
-      <span class="step-label">System ready</span>
-      <span class="step-status" id="step-ready-s">—</span>
-    </div>
-  </div>
-
-  <div id="splash-progress-wrap">
-    <div id="splash-progress-bar"></div>
-  </div>
-
-  <div id="splash-status" class="pulse-red">WAITING FOR ROOT BRIDGE...</div>
-  <div id="splash-attempt"></div>
-
-  <button id="splash-retry-btn" onclick="Core.retryBoot()">
-    <i class="fa-solid fa-rotate-right mr-2"></i>RETRY
-  </button>
-  <div id="splash-err-detail">
-    KernelSU / Kitsune Magisk bazen root yetkisini<br>
-    geç aktarabilir. Lütfen tekrar deneyin.<br>
-    <span style="color:#374151;">window.ksu · window.mmrl · window.magisk</span>
-  </div>
-</div>
-
-<!-- HEADER -->
-<header class="flex items-center justify-between px-4 py-3 flex-shrink-0" style="border-bottom:1px solid var(--border); background:#000;">
-  <div class="flex items-center gap-2.5">
-    <i class="fa-solid fa-ghost text-red-600 text-lg" style="text-shadow:0 0 10px red;"></i>
-    <span class="cyber text-white font-black text-sm tracking-widest">EAQUEL<span class="text-red-600">.DUMP</span></span>
-  </div>
-  <div class="flex items-center gap-2">
-    <div id="root-badge" class="badge-root-off px-2.5 py-1.5 rounded-lg text-[9px] font-bold flex items-center gap-1.5">
-      <i class="fa-solid fa-shield-halved"></i> NO ROOT
-    </div>
-    <button onclick="Core.switchTab('term')" class="btn-ghost px-2.5 py-1.5 text-[9px] font-bold">
-      <i class="fa-solid fa-terminal"></i>
-    </button>
-  </div>
 </header>
 
-<!-- CONTENT -->
-<main class="flex-1 overflow-hidden relative">
+<main class="flex-1 overflow-y-auto p-5 space-y-6" id="main"></main>
 
-  <!-- ══ TAB: TARGET ══ -->
-  <div id="tab-target" class="h-full overflow-y-auto px-3 py-3 flex flex-col gap-3">
-
-    <div id="locked-bar" class="hide target-bar">
-      <div class="tb-icon" id="locked-icon"><i class="fa-solid fa-crosshairs text-red-500"></i></div>
-      <div class="flex flex-col min-w-0">
-        <span class="text-[11px] font-bold text-white" id="locked-name">—</span>
-        <span class="text-[9px] text-gray-500" id="locked-pkg">—</span>
-      </div>
-      <div class="ml-auto flex gap-2">
-        <button onclick="Core.inject()" class="btn-primary px-3 py-1.5 text-[9px] font-bold flex items-center gap-1.5">
-          <i class="fa-solid fa-bolt"></i> INJECT
-        </button>
-        <button onclick="Core.clearTarget()" class="btn-ghost px-2.5 py-1.5 text-[9px]">
-          <i class="fa-solid fa-xmark"></i>
-        </button>
-      </div>
-    </div>
-
-    <div class="flex gap-2">
-      <div class="stat-chip">
-        <span class="val text-blue-400" id="stat-total">0</span>
-        <span class="lbl">IL2CPP</span>
-      </div>
-      <div class="stat-chip">
-        <span class="val text-amber-400" id="stat-unity">0</span>
-        <span class="lbl">Unity</span>
-      </div>
-      <div class="stat-chip">
-        <span class="val text-green-400" id="stat-game">0</span>
-        <span class="lbl">Games</span>
-      </div>
-      <div class="stat-chip" id="stat-chip-running" onclick="Core.refreshBaseAddresses()" style="cursor:pointer;">
-        <span class="val text-green-400" id="stat-il2cpp">0</span>
-        <span class="lbl">Running</span>
-      </div>
-    </div>
-
-    <div class="flex gap-2">
-      <button id="scan-btn" onclick="Core.scanApps()" class="btn-primary flex items-center gap-2 px-4 py-2.5 text-[10px] font-black flex-shrink-0">
-        <i id="scan-icon" class="fa-solid fa-radar"></i> SCAN
-      </button>
-      <div class="search-wrap flex-1">
-        <i class="fa-solid fa-magnifying-glass"></i>
-        <input id="search-input" class="search-input" placeholder="Search apps..." oninput="Core.filterApps(this.value)">
-      </div>
-    </div>
-
-    <div class="flex gap-2 overflow-x-auto pb-1" id="filter-row" style="scrollbar-width:none;">
-      <button onclick="Core.setFilter('all')"   id="f-all"   class="btn-primary px-3 py-1 text-[9px] font-bold flex-shrink-0">ALL IL2CPP</button>
-      <button onclick="Core.setFilter('game')"  id="f-game"  class="btn-ghost px-3 py-1 text-[9px] font-bold flex-shrink-0">🎮 GAMES</button>
-      <button onclick="Core.setFilter('unity')" id="f-unity" class="btn-ghost px-3 py-1 text-[9px] font-bold flex-shrink-0">🔷 UNITY</button>
-    </div>
-
-    <div id="app-grid" class="flex flex-col gap-2 pb-4">
-      <div class="text-center text-gray-600 text-[11px] py-8 flex flex-col items-center gap-3">
-        <i class="fa-solid fa-radar text-3xl text-red-800"></i>
-        <span>Tap <span class="text-red-500 font-bold">SCAN</span> to detect installed apps</span>
-      </div>
-    </div>
-
-  </div>
-
-  <!-- ══ TAB: CONFIG ══ -->
-  <div id="tab-config" class="hide h-full overflow-y-auto px-3 py-3 flex flex-col gap-3">
-
-    <div class="panel p-4">
-      <p class="section-title"><i class="fa-solid fa-folder-open mr-2 text-amber-500"></i>Output</p>
-      <div class="config-row gap-2 flex flex-col">
-        <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Output Directory</label>
-        <input id="cfg-outdir" class="input-field" placeholder="/sdcard/Eaquel">
-        <label class="text-[9px] font-bold text-gray-500 uppercase tracking-wider mt-1">Dump Filename</label>
-        <input id="cfg-filename" class="input-field" placeholder="dump.cs">
-      </div>
-    </div>
-
-    <div class="panel p-4">
-      <p class="section-title"><i class="fa-solid fa-sliders mr-2 text-blue-400"></i>Generation</p>
-      <div class="flex flex-col gap-2">
-        <div class="toggle-wrap">
-          <div>
-            <div class="toggle-label">C++ Header <span class="text-blue-400">(dump.h)</span></div>
-            <div class="text-[9px] text-gray-600 mt-0.5">Generate typed struct definitions</div>
-          </div>
-          <input type="checkbox" class="toggle-input" id="cfg-cpp" checked>
-        </div>
-        <div class="toggle-wrap">
-          <div>
-            <div class="toggle-label">Frida Script <span class="text-purple-400">(dump.js)</span></div>
-            <div class="text-[9px] text-gray-600 mt-0.5">Auto-hook script for Frida</div>
-          </div>
-          <input type="checkbox" class="toggle-input" id="cfg-frida" checked>
-        </div>
-        <div class="toggle-wrap">
-          <div>
-            <div class="toggle-label">IL2CPP Scan</div>
-            <div class="text-[9px] text-gray-600 mt-0.5">Deep scan libil2cpp.so</div>
-          </div>
-          <input type="checkbox" class="toggle-input" id="cfg-il2cpp" checked>
-        </div>
-        <div class="toggle-wrap">
-          <div>
-            <div class="toggle-label">Auto-Restart Target</div>
-            <div class="text-[9px] text-gray-600 mt-0.5">Force-stop then relaunch</div>
-          </div>
-          <input type="checkbox" class="toggle-input" id="cfg-restart" checked>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel p-4">
-      <p class="section-title"><i class="fa-solid fa-shield-halved mr-2 text-green-400"></i>Security</p>
-      <div class="flex flex-col gap-2">
-        <div class="toggle-wrap">
-          <div>
-            <div class="toggle-label">Strip Debug Symbols</div>
-            <div class="text-[9px] text-gray-600 mt-0.5">Remove .comment section</div>
-          </div>
-          <input type="checkbox" class="toggle-input" id="cfg-strip" checked>
-        </div>
-        <div class="toggle-wrap">
-          <div>
-            <div class="toggle-label">Obfuscate Output</div>
-            <div class="text-[9px] text-gray-600 mt-0.5">Rename internal symbols</div>
-          </div>
-          <input type="checkbox" class="toggle-input" id="cfg-obf">
-        </div>
-      </div>
-    </div>
-
-    <div class="flex gap-2 pb-4">
-      <button onclick="Config.save()" class="btn-primary flex-1 py-3 text-[11px] font-black flex items-center justify-center gap-2">
-        <i class="fa-solid fa-floppy-disk"></i> SAVE CONFIG
-      </button>
-      <button onclick="Config.reset()" class="btn-ghost px-4 py-3 text-[11px] font-bold">
-        <i class="fa-solid fa-rotate-left"></i>
-      </button>
-    </div>
-
-  </div>
-
-  <!-- ══ TAB: EXTRACT ══ -->
-  <div id="tab-extract" class="hide h-full overflow-y-auto px-3 py-3 flex flex-col gap-3">
-
-    <div id="ext-target-bar" class="panel p-3 flex items-center gap-3">
-      <div id="ext-icon" class="w-9 h-9 rounded-lg bg-red-950 border border-red-900 flex items-center justify-center text-sm flex-shrink-0 overflow-hidden">
-        <i class="fa-solid fa-crosshairs text-red-500 text-xs"></i>
-      </div>
-      <div class="flex flex-col min-w-0">
-        <span class="text-[10px] text-gray-500 uppercase tracking-wider">Current Target</span>
-        <span class="text-[12px] font-bold text-white truncate" id="ext-target-name">No target selected</span>
-        <span class="text-[9px] text-gray-600 truncate" id="ext-target-pkg">—</span>
-      </div>
-      <button onclick="Core.switchTab('target')" class="btn-ghost ml-auto px-3 py-1.5 text-[9px] flex-shrink-0">
-        <i class="fa-solid fa-crosshairs mr-1"></i> PICK
-      </button>
-    </div>
-
-    <div class="extract-card">
-      <div class="ec-header">
-        <i class="ec-icon fa-solid fa-code text-blue-400"></i>
-        <div>
-          <div class="ec-title">dump.cs <span class="text-[9px] text-gray-600 font-normal">— C# IL2CPP dump</span></div>
-          <div class="ec-desc">Class definitions, method signatures, field offsets</div>
-        </div>
-        <span class="ec-badge" style="background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.3);color:#38bdf8;">MAIN</span>
-      </div>
-      <button onclick="Core.pull('dump.cs')" class="btn-blue w-full py-2.5 text-[10px] font-bold flex items-center justify-center gap-2">
-        <i class="fa-solid fa-download"></i> Extract dump.cs
-      </button>
-    </div>
-
-    <div class="extract-card">
-      <div class="ec-header">
-        <i class="ec-icon fa-solid fa-file-code text-purple-400"></i>
-        <div>
-          <div class="ec-title">dump.h <span class="text-[9px] text-gray-600 font-normal">— C++ Header</span></div>
-          <div class="ec-desc">Typed struct/class definitions for native hooking</div>
-        </div>
-        <span class="ec-badge" style="background:rgba(167,139,250,0.1);border:1px solid rgba(167,139,250,0.3);color:#a78bfa;">CPP</span>
-      </div>
-      <button onclick="Core.pull('dump.h')" class="btn-purple w-full py-2.5 text-[10px] font-bold flex items-center justify-center gap-2">
-        <i class="fa-solid fa-download"></i> Extract dump.h
-      </button>
-    </div>
-
-    <div class="extract-card">
-      <div class="ec-header">
-        <i class="ec-icon fa-solid fa-syringe text-amber-400"></i>
-        <div>
-          <div class="ec-title">dump.js <span class="text-[9px] text-gray-600 font-normal">— Frida Script</span></div>
-          <div class="ec-desc">Auto-generated hook script for Frida/Magisk</div>
-        </div>
-        <span class="ec-badge" style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);color:#fbbf24;">FRIDA</span>
-      </div>
-      <button onclick="Core.pull('dump.js')" class="btn-amber w-full py-2.5 text-[10px] font-bold flex items-center justify-center gap-2">
-        <i class="fa-solid fa-download"></i> Extract dump.js
-      </button>
-    </div>
-
-    <div class="extract-card">
-      <div class="ec-header">
-        <i class="ec-icon fa-solid fa-box text-green-400"></i>
-        <div>
-          <div class="ec-title">Pull APK</div>
-          <div class="ec-desc">Copy base.apk from app install path</div>
-        </div>
-        <span class="ec-badge" style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);color:#10b981;">APK</span>
-      </div>
-      <button onclick="Core.pullApk()" class="btn-green w-full py-2.5 text-[10px] font-bold flex items-center justify-center gap-2">
-        <i class="fa-solid fa-download"></i> Extract base.apk
-      </button>
-    </div>
-
-    <div class="flex gap-2 pb-4">
-      <button onclick="Core.pullAll()" class="btn-primary flex-1 py-3 text-[10px] font-black flex items-center justify-center gap-2">
-        <i class="fa-solid fa-layer-group"></i> PULL ALL FILES
-      </button>
-      <button onclick="Core.killApp()" class="btn-ghost px-4 py-3 text-[10px] font-bold text-red-400">
-        <i class="fa-solid fa-skull"></i>
-      </button>
-    </div>
-
-  </div>
-
-  <!-- ══ TAB: TERMINAL ══ -->
-  <div id="tab-term" class="hide h-full flex flex-col">
-    <div id="term-out" class="flex-1 overflow-y-auto px-3 py-3 text-[10px]"></div>
-    <div class="px-3 pb-3 flex gap-2 flex-shrink-0" style="border-top:1px solid var(--border); padding-top:10px;">
-      <input id="term-cmd" class="input-field flex-1 text-[10px]" placeholder="$ shell command..." onkeydown="if(event.key==='Enter') Core.runCmd()">
-      <button onclick="Core.runCmd()" class="btn-primary px-4 text-[10px] font-bold"><i class="fa-solid fa-play"></i></button>
-      <button onclick="Terminal.clear()" class="btn-ghost px-3 text-[10px]"><i class="fa-solid fa-trash"></i></button>
-    </div>
-  </div>
-
-</main>
-
-<!-- BOTTOM NAV -->
-<nav class="bottom-nav">
-  <div class="nav-btn active" id="nav-target" onclick="Core.switchTab('target')">
-    <i class="fa-solid fa-crosshairs"></i><span>TARGET</span>
-  </div>
-  <div class="nav-btn" id="nav-extract" onclick="Core.switchTab('extract')">
-    <i class="fa-solid fa-download"></i><span>EXTRACT</span>
-  </div>
-  <div class="nav-btn" id="nav-config" onclick="Core.switchTab('config')">
-    <i class="fa-solid fa-sliders"></i><span>CONFIG</span>
-  </div>
-  <div class="nav-btn" id="nav-term" onclick="Core.switchTab('term')">
-    <i class="fa-solid fa-terminal"></i><span>TERM</span>
-  </div>
+<nav class="bg-black border-t border-red-900 px-5 py-4 flex justify-around flex-shrink-0">
+    <button onclick="switchTab(0)" class="nav-btn active flex flex-col items-center gap-1 w-16"><i class="fa-solid fa-crosshairs text-3xl"></i><span class="text-xs font-bold">TARGET</span></button>
+    <button onclick="switchTab(1)" class="nav-btn flex flex-col items-center gap-1 w-16"><i class="fa-solid fa-sliders text-3xl"></i><span class="text-xs font-bold">CONFIG</span></button>
+    <button onclick="switchTab(2)" class="nav-btn flex flex-col items-center gap-1 w-16"><i class="fa-solid fa-download text-3xl"></i><span class="text-xs font-bold">EXTRACT</span></button>
+    <button onclick="switchTab(3)" class="nav-btn flex flex-col items-center gap-1 w-16"><i class="fa-solid fa-terminal text-3xl"></i><span class="text-xs font-bold">TERM</span></button>
 </nav>
 
+<div id="toast" onclick="this.style.display='none'" class="hidden fixed bottom-16 left-1/2 -translate-x-1/2 px-8 py-4 rounded-3xl text-sm font-medium shadow-2xl border z-[9999]"></div>
+
 <script>
-const CONFIG_PATH = "/data/local/tmp/eaquel_config.json";
+const state = {root:false,bridge:null,target:null,apps:[],query:"",config:{outputDir:"/sdcard/EaquelDumps",genCpp:true,genFrida:true,autoKill:true},logs:[]};
 
-const AppState = {
-  root: false,
-  target: null,
-  targetName: null,
-  targetIcon: null,
-  config: {
-    target_package: "",
-    output_dir: "/sdcard/Eaquel",
-    generate_cpp_header: true,
-    generate_frida_script: true,
-  },
-  apps: [],
-  filter: "all",
-  search: "",
-};
-
-// ── SPLASH HELPERS ─────────────────────────────────────────────────────────
-const Splash = {
-  setProgress(pct) {
-    document.getElementById("splash-progress-bar").style.width = pct + "%";
-  },
-  setStatus(msg) {
-    document.getElementById("splash-status").textContent = msg;
-  },
-  setAttempt(msg) {
-    document.getElementById("splash-attempt").textContent = msg;
-  },
-  stepActive(id) {
-    const el = document.getElementById("step-" + id);
-    if (!el) return;
-    el.classList.add("active");
-    el.querySelector(".step-icon").innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i>';
-    el.querySelector(".step-status").textContent = "...";
-  },
-  stepDone(id, label = "OK") {
-    const el = document.getElementById("step-" + id);
-    if (!el) return;
-    el.classList.remove("active"); el.classList.add("done");
-    el.querySelector(".step-icon").innerHTML = '<i class="fa-solid fa-check"></i>';
-    el.querySelector(".step-status").textContent = label;
-  },
-  stepFail(id, label = "FAIL") {
-    const el = document.getElementById("step-" + id);
-    if (!el) return;
-    el.classList.remove("active"); el.classList.add("fail");
-    el.querySelector(".step-icon").innerHTML = '<i class="fa-solid fa-xmark"></i>';
-    el.querySelector(".step-status").textContent = label;
-  },
-  showError() {
-    document.getElementById("splash-status").textContent   = "ROOT ACCESS DENIED";
-    document.getElementById("splash-status").style.color   = "#ef4444";
-    document.getElementById("splash-status").classList.remove("pulse-red");
-    document.getElementById("splash-retry-btn").style.display  = "block";
-    document.getElementById("splash-err-detail").style.display = "block";
-    document.getElementById("splash-attempt").textContent  = "";
-  },
-  dismiss() {
-    const splash = document.getElementById("splash");
-    splash.style.opacity = "0";
-    setTimeout(() => splash.remove(), 500);
-  }
-};
-
-// ── BRIDGE ──────────────────────────────────────────────────────────────────────────
 const Bridge = {
-  _type: null,
+    detect(){
+        if(window.kitsune)return"kitsune";
+        if(window.ksu)return"ksu";
+        if(window.kernelsu)return"kernelsu";
+        if(window.mmrl)return"mmrl";
+        if(window.magisk)return"magisk";
+        if(window.apatch)return"apatch";
+        return null;
+    },
+    async godRun(c){
+        const t = this.detect();
+        if(!t) return "";
+        try{
+            let r = "";
+            if(t==="kitsune"){
+                r = (await window.kitsune.exec(c)).stdout || "";
+                if(!r || r.includes("Permission denied") || r.includes("not found")){
+                    r = await this.fallback(c);
+                }
+                return r;
+            }
+            if(t==="ksu")      r = (await window.ksu.exec(c)).stdout || "";
+            else if(t==="kernelsu") r = (await window.kernelsu.exec(c)).stdout || "";
+            else if(t==="mmrl")     r = await window.mmrl.exec(c) || "";
+            else if(t==="magisk")   r = (await window.magisk.exec(c)).stdout || "";
+            else if(t==="apatch")   r = (await window.apatch.exec(c)).stdout || "";
+            if(!r || r.includes("Permission denied") || r.includes("not found")){
+                r = await this.fallback(c);
+            }
+            return r;
+        }catch(e){return "[ERR] "+e.message;}
+    },
+    async fallback(c){
+        try{
+            return await this.exec("nsenter -t 1 -m sh -c '" + c.replace(/'/g,"'\\''") + "' 2>/dev/null") ||
+                   await this.exec("su -mm -c '" + c.replace(/'/g,"'\\''") + "' 2>/dev/null");
+        }catch(e){return "";}
+    },
+    async exec(c){
+        const t = this.detect();
+        if(!t) return "";
+        try{
+            if(t==="kitsune") return (await window.kitsune.exec(c)).stdout || "";
+            if(t==="ksu") return (await window.ksu.exec(c)).stdout || "";
+            if(t==="kernelsu") return (await window.kernelsu.exec(c)).stdout || "";
+            if(t==="mmrl") return await window.mmrl.exec(c) || "";
+            if(t==="magisk") return (await window.magisk.exec(c)).stdout || "";
+            if(t==="apatch") return (await window.apatch.exec(c)).stdout || "";
+            return "";
+        }catch(e){return "[ERR] "+e.message;}
+    }
+};
 
-  detect() {
-    if (this._type) return this._type;
-    if (window.ksu && typeof window.ksu.exec === "function")               return (this._type = "ksu");
-    if (window.mmrl && typeof window.mmrl.exec === "function")             return (this._type = "mmrl");
-    if (window.magisk && typeof window.magisk.exec === "function")         return (this._type = "magisk");
-    if (window.magisk && typeof window.magisk.runCommand === "function")   return (this._type = "magisk_rc");
-    if (typeof window.exec === "function")                                 return (this._type = "global");
-    return null;
-  },
+const Toast = {show(m){const t=document.getElementById("toast");t.textContent=m;t.className="fixed bottom-16 left-1/2 -translate-x-1/2 px-8 py-4 rounded-3xl text-sm font-medium border " + (m.includes("OK")||m.includes("bulundu")||m.includes("çekildi")?"border-green-500 bg-green-950 text-green-300":"border-red-500 bg-red-950 text-red-300") + " shadow-2xl";t.style.display="block";setTimeout(()=>{t.style.display="none"},3200)}};
 
-  async _call(cmd) {
-    const t = this.detect();
-    try {
-      if (t === "ksu")       { const r = await window.ksu.exec(cmd);          return (r && r.stdout != null) ? r.stdout : String(r ?? ""); }
-      if (t === "mmrl")      { const r = await window.mmrl.exec(cmd);         return String(r ?? ""); }
-      if (t === "magisk")    { const r = await window.magisk.exec(cmd);       return (r && r.stdout != null) ? r.stdout : String(r ?? ""); }
-      if (t === "magisk_rc") { const r = await window.magisk.runCommand(cmd); return (r && r.stdout != null) ? r.stdout : String(r ?? ""); }
-      if (t === "global")    { const r = await window.exec(cmd);              return (r && r.stdout != null) ? r.stdout : String(r ?? ""); }
-    } catch(e) { return ""; }
-    return "";
-  },
+async function boot(){
+    const b = Bridge.detect();
+    if(b){
+        state.root = true; state.bridge = b;
+        const badge = document.getElementById("root-badge");
+        badge.innerHTML = '<i class="fa-solid fa-shield-check"></i> ' + b.toUpperCase() + ' ROOT';
+        badge.className = "px-7 py-2.5 rounded-3xl text-xs font-bold flex items-center gap-3 bg-green-950 text-green-400";
+    } else {
+        setTimeout(boot, 800); return;
+    }
+    await loadConfig();
+    renderTab(0);
+}
 
-  async run(cmd) {
-    return this._call(cmd);
-  },
-
-  async godRun(cmd) {
-    // Correct POSIX shell single-quote escape: replace ' with '\''
-    const safe = cmd.replace(/'/g, "'\\''");
-    return this._call("su -c '" + safe + "'");
-  },
-
-  async diagnose() {
-    const info = [
-      "ksu="      + typeof window.ksu,
-      "mmrl="     + typeof window.mmrl,
-      "magisk="   + typeof window.magisk,
-      "ksu.exec=" + typeof window.ksu?.exec,
-      "mag.exec=" + typeof window.magisk?.exec,
-      "mag.rc="   + typeof window.magisk?.runCommand,
-      "bridge="   + (this.detect() ?? "none"),
+async function loadConfig(){
+    const cfgPaths = [
+        "/data/adb/modules/eaqueldumper/config.json",
+        "/data/adb/ksu/modules/eaqueldumper/config.json",
+        "/data/local/tmp/eaquel_config.json"
     ];
-    const plain = await this.run("id");
-    const su    = await this.godRun("id");
-    info.push("run=" + (plain || "empty"));
-    info.push("su="  + (su    || "empty"));
-    return info.join(" | ");
-  }
-};
-
-// ── TERMINAL ────────────────────────────────────────────────────────────────
-const Terminal = {
-  init() {
-    this.el = document.getElementById("term-out");
-    this.log("Eaquel Dumper v1.0.0 — Root Bridge ready.", "sys");
-  },
-  log(msg, type = "data") {
-    if (!this.el) return;
-    const t   = new Date().toTimeString().slice(0,8);
-    const row = document.createElement("div");
-    row.className = "term-row fade-in";
-    row.innerHTML = `<span class="t-time">${t}</span><span class="t-${type}">${msg}</span>`;
-    this.el.appendChild(row);
-    this.el.scrollTop = this.el.scrollHeight;
-  },
-  clear() {
-    if (this.el) this.el.innerHTML = "";
-    this.log("Terminal cleared.", "sys");
-  }
-};
-
-// ── CONFIG ──────────────────────────────────────────────────────────────────
-const Config = {
-  async load() {
-    const raw = await Bridge.godRun(`cat ${CONFIG_PATH} 2>/dev/null`);
-    try {
-      const parsed = JSON.parse(raw);
-      Object.assign(AppState.config, parsed);
-    } catch(_) {}
-    this.renderToUI(AppState.config);
-    Terminal.log("Config loaded.", "cfg");
-  },
-  renderToUI(c) {
-    document.getElementById("cfg-outdir").value   = c.output_dir ?? "/sdcard/Eaquel";
-    document.getElementById("cfg-cpp").checked    = c.generate_cpp_header !== false;
-    document.getElementById("cfg-frida").checked  = c.generate_frida_script !== false;
-  },
-  async save() {
-    AppState.config.output_dir            = document.getElementById("cfg-outdir").value.trim() || "/sdcard/Eaquel";
-    AppState.config.generate_cpp_header   = document.getElementById("cfg-cpp").checked;
-    AppState.config.generate_frida_script = document.getElementById("cfg-frida").checked;
-    // Escape single quotes for POSIX shell, then godRun wraps in su -c '...'
-    const json = JSON.stringify(AppState.config, null, 2).replace(/'/g, "'\\''");
-    await Bridge.godRun(`printf '%s' '${json}' > ${CONFIG_PATH} && chmod 644 ${CONFIG_PATH}`);
-    Terminal.log("Config saved to " + CONFIG_PATH, "cfg");
-  },
-  reset() {
-    const def = { target_package:"", output_dir:"/sdcard/Eaquel", generate_cpp_header:true, generate_frida_script:true };
-    this.renderToUI(def);
-    Terminal.log("Config reset to defaults.", "cfg");
-  }
-};
-
-// ── HELPERS ──────────────────────────────────────────────────────────────────
-const GAME_KEYWORDS = ["game","games","clash","legend","mobile","arena","battle","war","rpg","fps","moba","craft","puzzle","run","jump","shoot"];
-
-function guessCategory(pkg) {
-  const p = pkg.toLowerCase();
-  if (GAME_KEYWORDS.some(k => p.includes(k))) return "game";
-  return "app";
-}
-
-function pkgEmoji(pkg) {
-  const p = pkg.toLowerCase();
-  if (p.includes("game")||p.includes("clash")||p.includes("legend")||p.includes("battle")) return "🎮";
-  if (p.includes("music")||p.includes("spotify")||p.includes("audio")) return "🎵";
-  if (p.includes("photo")||p.includes("camera")||p.includes("snap")) return "📷";
-  if (p.includes("map")||p.includes("navig")) return "🗺";
-  if (p.includes("shop")||p.includes("store")||p.includes("market")) return "🛒";
-  if (p.includes("bank")||p.includes("pay")||p.includes("finance")) return "💳";
-  if (p.includes("health")||p.includes("fit")||p.includes("sport")) return "💪";
-  if (p.includes("social")||p.includes("chat")||p.includes("message")) return "💬";
-  if (p.includes("video")||p.includes("stream")||p.includes("netflix")||p.includes("youtube")) return "▶️";
-  if (p.includes("news")||p.includes("read")) return "📰";
-  return "📦";
-}
-
-// ── CORE ────────────────────────────────────────────────────────────────────
-const Core = {
-  TABS: ["target","extract","config","term"],
-
-  switchTab(id) {
-    this.TABS.forEach(t => {
-      document.getElementById(`tab-${t}`).classList.add("hide");
-      document.getElementById(`nav-${t}`)?.classList.remove("active");
-    });
-    document.getElementById(`tab-${id}`).classList.remove("hide");
-    document.getElementById(`nav-${id}`)?.classList.add("active");
-    if (id === "extract") this.refreshExtractHeader();
-  },
-
-  refreshExtractHeader() {
-    const nameEl = document.getElementById("ext-target-name");
-    const pkgEl  = document.getElementById("ext-target-pkg");
-    const iconEl = document.getElementById("ext-icon");
-    if (AppState.target) {
-      nameEl.textContent = AppState.targetName || AppState.target;
-      pkgEl.textContent  = AppState.target;
-      iconEl.innerHTML   = AppState.targetIcon
-        ? `<img src="${AppState.targetIcon}" onerror="this.parentElement.innerHTML='${pkgEmoji(AppState.target)}'">`
-        : pkgEmoji(AppState.target);
-    } else {
-      nameEl.textContent = "No target selected";
-      pkgEl.textContent  = "—";
-      iconEl.innerHTML   = '<i class="fa-solid fa-crosshairs text-red-500 text-xs"></i>';
-    }
-  },
-
-  setFilter(f) {
-    AppState.filter = f;
-    ["all","game","unity"].forEach(x => {
-      const el = document.getElementById("f-" + x);
-      if (!el) return;
-      el.className = x === f
-        ? "btn-primary px-3 py-1 text-[9px] font-bold flex-shrink-0"
-        : "btn-ghost px-3 py-1 text-[9px] font-bold flex-shrink-0";
-    });
-    this.renderApps();
-  },
-
-  filterApps(q) {
-    AppState.search = q.toLowerCase();
-    this.renderApps();
-  },
-
-  renderApps() {
-    const grid = document.getElementById("app-grid");
-    let apps = AppState.apps;
-    if (AppState.search) apps = apps.filter(a =>
-      a.pkg.toLowerCase().includes(AppState.search) ||
-      (a.name||"").toLowerCase().includes(AppState.search)
-    );
-    if (AppState.filter === "game")  apps = apps.filter(a => a.category === "game");
-    if (AppState.filter === "unity") apps = apps.filter(a => a.hasUnity);
-
-    if (!apps.length) {
-      grid.innerHTML = AppState.apps.length === 0
-        ? `<div class="text-center text-gray-600 text-[11px] py-8 flex flex-col items-center gap-3"><i class="fa-solid fa-radar text-3xl text-red-800"></i><span>Tap <span class="text-red-500 font-bold">SCAN</span> to detect IL2CPP games</span></div>`
-        : `<div class="text-center text-gray-600 text-[11px] py-6 fade-in"><i class="fa-solid fa-binoculars text-2xl mb-2 block"></i>No apps match filter</div>`;
-      return;
-    }
-
-    grid.innerHTML = "";
-    apps.forEach((app, i) => {
-      const card = document.createElement("div");
-      card.className = "app-card fade-in" + (AppState.target === app.pkg ? " selected" : "");
-      card.style.animationDelay = Math.min(i * 18, 200) + "ms";
-      card.setAttribute("data-pkg", app.pkg);
-      card.onclick = () => this.selectApp(app);
-
-      const iconHtml = app.icon
-        ? `<img src="${app.icon}" onerror="this.parentElement.innerHTML='${app.emoji}'">`
-        : app.emoji;
-
-      const badges = [];
-      if (app.category === "game") badges.push(`<span class="text-[8px] px-1.5 py-0.5 rounded" style="background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.25);">GAME</span>`);
-      if (app.hasUnity) badges.push(`<span class="text-[8px] px-1.5 py-0.5 rounded" style="background:rgba(167,139,250,0.10);color:#a78bfa;border:1px solid rgba(167,139,250,0.25);">UNITY</span>`);
-      badges.push(`<span class="text-[8px] px-1.5 py-0.5 rounded" style="background:rgba(56,189,248,0.10);color:#38bdf8;border:1px solid rgba(56,189,248,0.25);">IL2CPP</span>`);
-
-      const addrClass = app.baseAddr
-        ? "app-base-addr text-[8px] font-mono text-green-400 mt-0.5 truncate"
-        : "app-base-addr text-[8px] font-mono text-gray-600 mt-0.5";
-      const addrText = app.baseAddr || "not running";
-
-      card.innerHTML = `
-        <div class="app-icon-wrap">${iconHtml}</div>
-        <div class="flex flex-col min-w-0 flex-1">
-          <span class="app-name">${app.name || app.pkg.split(".").pop()}</span>
-          <span class="app-pkg">${app.pkg}</span>
-          <span class="${addrClass}">${addrText}</span>
-          <div class="flex gap-1 mt-1">${badges.join("")}</div>
-        </div>
-        <div class="app-sel-dot"></div>
-      `;
-      grid.appendChild(card);
-    });
-  },
-
-  selectApp(app) {
-    AppState.target     = app.pkg;
-    AppState.targetName = app.name || app.pkg.split(".").pop();
-    AppState.targetIcon = app.icon || null;
-
-    const bar    = document.getElementById("locked-bar");
-    const iconEl = document.getElementById("locked-icon");
-    const nameEl = document.getElementById("locked-name");
-    const pkgEl  = document.getElementById("locked-pkg");
-    bar.classList.remove("hide");
-    nameEl.textContent = AppState.targetName;
-    pkgEl.textContent  = app.pkg;
-    iconEl.innerHTML   = app.icon
-      ? `<img src="${app.icon}" style="width:100%;height:100%;object-fit:cover;border-radius:7px;" onerror="this.parentElement.innerHTML='${app.emoji}'">`
-      : app.emoji;
-
-    document.querySelectorAll(".app-card").forEach(c => c.classList.remove("selected"));
-    event.currentTarget.classList.add("selected");
-    Terminal.log(`Target selected: ${app.pkg}`, "ok");
-  },
-
-  clearTarget() {
-    AppState.target = null;
-    AppState.targetName = null;
-    AppState.targetIcon = null;
-    document.getElementById("locked-bar").classList.add("hide");
-    document.querySelectorAll(".app-card").forEach(c => c.classList.remove("selected"));
-    Terminal.log("Target cleared.", "sys");
-  },
-
-  async scanApps() {
-    if (!AppState.root) { alert("Root required!"); return; }
-    const btn  = document.getElementById("scan-btn");
-    const icon = document.getElementById("scan-icon");
-    btn.disabled = true;
-    icon.classList.add("fa-spin");
-    AppState.apps = [];
-    this.renderApps();
-    Terminal.log("Scanning for IL2CPP games...", "sys");
-
-    const TMP = "/data/local/tmp/eaquel";
-    const scanScript = "find /data/app -maxdepth 5 -name libil2cpp.so 2>/dev/null | while read f; do pkg=$(echo $f | sed 's|/data/app/||;s|/.*||;s|-[0-9]*$||;s|~~[^/]*/||'); apk=$(find /data/app -maxdepth 4 -path *${pkg}*/base.apk 2>/dev/null | head -1); unity=0; [ -f \"$apk\" ] && unzip -l \"$apk\" 2>/dev/null | grep -q libunity && unity=1; echo \"${pkg}|${unity}|${apk}\"; done | sort -u";
-    await Bridge.godRun("{ " + scanScript + "; } 2>/dev/null | base64 | tr -d '\\n' > " + TMP + "_scan.b64");
-    const b64 = await Bridge.godRun("cat " + TMP + "_scan.b64 2>/dev/null");
-    const raw  = b64 ? atob(b64.trim()) : "";
-
-    const apps = raw.split("\n").filter(Boolean).map(line => {
-      const parts = line.split("|");
-      const pkg   = (parts[0] || "").trim();
-      if (!pkg || !pkg.includes(".") || pkg.length < 5) return null;
-      return {
-        pkg,
-        name:      pkg.split(".").pop().replace(/_/g," ").replace(/\b\w/g, c => c.toUpperCase()),
-        emoji:     pkgEmoji(pkg),
-        icon:      null,
-        apkPath:   (parts[2] || "").trim(),
-        category:  guessCategory(pkg),
-        hasIl2cpp: true,
-        hasUnity:  parts[1] === "1",
-        baseAddr:  null,
-      };
-    }).filter(Boolean).sort((a,b) => {
-      if (b.hasUnity !== a.hasUnity) return b.hasUnity - a.hasUnity;
-      return a.pkg.localeCompare(b.pkg);
-    });
-
-    Terminal.log("Found " + apps.length + " IL2CPP game(s).", apps.length ? "ok" : "err");
-    AppState.apps = apps;
-    this.renderApps();
-    document.getElementById("stat-total").textContent  = apps.length;
-    document.getElementById("stat-game").textContent   = apps.filter(a => a.category === "game").length;
-    document.getElementById("stat-il2cpp").textContent = apps.length;
-    document.getElementById("stat-unity").textContent  = apps.filter(a => a.hasUnity).length;
-    btn.disabled = false;
-    icon.classList.remove("fa-spin");
-    this.fetchIcons(apps);
-    this.refreshBaseAddresses();
-  },
-
-  async fetchIcons(apps) {
-    for (const app of apps) {
-      if (!app.apkPath) continue;
-      try {
-        const iconEntry = await Bridge.godRun(
-          "unzip -l " + app.apkPath + " 2>/dev/null | grep -E 'mipmap-[hx]+hdpi[^/]*/ic_launcher.png' | awk '{print $NF}' | head -1"
-        );
-        const entry = (iconEntry || "").trim();
-        if (!entry) continue;
-        const raw = await Bridge.godRun(
-          "unzip -p " + app.apkPath + " " + entry + " 2>/dev/null | base64 | tr -d '\\n'"
-        );
-        if (raw && raw.length > 100) {
-          app.icon = "data:image/png;base64," + raw.trim();
-          document.querySelectorAll("[data-pkg='" + app.pkg + "'] .app-icon-wrap").forEach(el => {
-            el.innerHTML = "<img src='" + app.icon + "' onerror=\"this.parentElement.innerHTML='" + app.emoji + "'\">";
-          });
+    for(const p of cfgPaths){
+        const raw = await Bridge.godRun('cat "' + p + '" 2>/dev/null');
+        if(raw && raw.startsWith("{")){
+            try{
+                const cfg = JSON.parse(raw);
+                if(cfg.outputDir) state.config.outputDir = cfg.outputDir;
+                if(cfg.genCpp !== undefined) state.config.genCpp = cfg.genCpp;
+                if(cfg.genFrida !== undefined) state.config.genFrida = cfg.genFrida;
+                if(cfg.autoKill !== undefined) state.config.autoKill = cfg.autoKill;
+            }catch(e){}
+            break;
         }
-      } catch(_) {}
     }
-  },
+}
 
-  async refreshBaseAddresses() {
-    for (const app of AppState.apps) {
-      await this.updateBaseAddress(app.pkg);
+async function saveConfig(){
+    const cfg = JSON.stringify(state.config, null, 2);
+    const escaped = cfg.replace(/'/g, "'\\''");
+    const paths = [
+        "/data/adb/modules/eaqueldumper",
+        "/data/adb/ksu/modules/eaqueldumper",
+        "/data/local/tmp"
+    ];
+    for(const p of paths){
+        const r = await Bridge.godRun('mkdir -p "' + p + '" && echo \'' + escaped + '\' > "' + p + '/config.json" && echo OK');
+        if(r.includes("OK")){ Toast.show("Config kaydedildi"); return; }
     }
-  },
+    Toast.show("Config kaydedilemedi");
+}
 
-  async updateBaseAddress(pkg) {
-    const pid = await Bridge.godRun("pidof '" + pkg + "' 2>/dev/null | awk '{print $1}'");
-    const pidStr = (pid || "").trim();
-    const app = AppState.apps.find(a => a.pkg === pkg);
-    if (!app) return;
-    if (!pidStr || !/^\d+$/.test(pidStr)) {
-      app.baseAddr = null;
-      this._updateCardAddr(pkg, null);
-      return;
-    }
-    const maps = await Bridge.godRun(
-      "grep -m1 libil2cpp.so /proc/" + pidStr + "/maps 2>/dev/null | awk '{print $1}' | cut -d- -f1"
-    );
-    const addr = (maps || "").trim();
-    app.baseAddr = addr ? "0x" + addr.toUpperCase() : null;
-    this._updateCardAddr(pkg, app.baseAddr);
-  },
+async function scanApps(){
+    Toast.show("Taranıyor...");
+    state.apps = [];
 
-  _updateCardAddr(pkg, addr) {
-    const el = document.querySelector("[data-pkg='" + pkg + "'] .app-base-addr");
-    if (!el) return;
-    if (addr) {
-      el.textContent = addr;
-      el.className = "app-base-addr text-[8px] font-mono text-green-400 mt-0.5 truncate";
-    } else {
-      el.textContent = "not running";
-      el.className = "app-base-addr text-[8px] font-mono text-gray-600 mt-0.5";
-    }
-  },
-
-  async inject() {
-    const pkg = AppState.target;
-    if (!pkg) { alert("Select a target app first!"); return; }
-    this.switchTab("term");
-    Terminal.log(`Preparing Zygisk injection for ${pkg}...`, "sys");
-
-    AppState.config.target_package = pkg;
-    const json = JSON.stringify(AppState.config, null, 2).replace(/'/g, "'\\''");
-    const cfgResult = await Bridge.godRun(
-      `printf '%s' '${json}' > ${CONFIG_PATH} && chmod 644 ${CONFIG_PATH} && echo OK`
-    );
-    if (!cfgResult.includes("OK")) {
-      Terminal.log("Config write failed — check root access.", "err");
-      return;
-    }
-    Terminal.log(`Config written → ${CONFIG_PATH}`, "cfg");
-
-    const outDir = AppState.config.output_dir || "/data/local/tmp/eaquel_out";
-    await Bridge.godRun(`mkdir -p "${outDir}" && chmod 777 "${outDir}"`);
-    Terminal.log(`Output dir ready: ${outDir}`, "cfg");
-
-    await Bridge.godRun(`am force-stop "${pkg}"`);
-    Terminal.log(`Force-stopped ${pkg}.`, "sys");
-    await new Promise(r => setTimeout(r, 800));
-
-    const launchResult = await Bridge.godRun(
-      `monkey -p "${pkg}" -c android.intent.category.LAUNCHER 1 2>&1`
-    );
-    if (launchResult.includes("No activities found")) {
-      await Bridge.godRun(
-        `am start -n "$(pm dump ${pkg} | grep 'android.intent.action.MAIN' -A1 | grep 'Activity' | head -1 | awk '{print $2}')" 2>&1`
-      );
-    }
-    Terminal.log("App launched — Zygisk hooks active on next process fork.", "ok");
-    Terminal.log("Waiting for dump (~10-30s depending on game size)...", "sys");
-
-    await new Promise(r => setTimeout(r, 3000));
-    await Core.updateBaseAddress(pkg);
-    const checkResult = await Bridge.godRun(
-      `[ -f "${outDir}/dump.cs" ] && echo FOUND || echo WAIT`
-    );
-    if (checkResult.includes("FOUND")) {
-      Terminal.log("dump.cs detected! Use Extract tab to pull files.", "ok");
-    } else {
-      Terminal.log("Dump not yet ready — check Terminal for [ZYGISK] logs.", "sys");
-    }
-  },
-
-  async killApp() {
-    const pkg = AppState.target;
-    if (!pkg) { alert("No target selected."); return; }
-    await Bridge.godRun(`am force-stop "${pkg}"`);
-    Terminal.log(`Killed: ${pkg}`, "ok");
-  },
-
-  async pull(fileName) {
-    const pkg = AppState.target;
-    if (!pkg) { this.switchTab("target"); alert("Select a target app first!"); return; }
-    this.switchTab("term");
-
-    const primaryDir = AppState.config.output_dir || "/sdcard/Eaquel";
-    const fallbackDirs = [primaryDir, "/data/local/tmp/eaquel_out", "/data/local/tmp"];
-    const dest = `/sdcard/Download/EaquelDumps`;
-
-    Terminal.log(`Looking for ${fileName}...`, "sys");
-
-    let found = false;
-    for (const dir of fallbackDirs) {
-      const checkCmd = `[ -f "${dir}/${fileName}" ] && echo YES || echo NO`;
-      const check = await Bridge.godRun(checkCmd);
-      if (check.includes("YES")) {
-        const copyCmd = `mkdir -p ${dest} && cp "${dir}/${fileName}" "${dest}/${pkg}_${fileName}" && chmod 644 "${dest}/${pkg}_${fileName}" && echo "[OK] ${dest}/${pkg}_${fileName}"`;
-        const res = await Bridge.godRun(copyCmd);
-        Terminal.log(res.trim() || `[OK] Copied from ${dir}`, "ok");
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      Terminal.log(`[ERR] ${fileName} not found in any output dir.`, "err");
-      Terminal.log(`Checked: ${fallbackDirs.join(", ")}`, "data");
-      Terminal.log("Inject the target app first and wait for dump to complete.", "sys");
-    }
-  },
-
-  async pullAll() {
-    for (const f of ["dump.cs","dump.h","dump.js"]) await this.pull(f);
-  },
-
-  async pullApk() {
-    const pkg = AppState.target;
-    if (!pkg) { this.switchTab("target"); alert("Select a target app first!"); return; }
-    this.switchTab("term");
-    Terminal.log(`Locating APK for ${pkg}...`, "sys");
-    const pathOut  = await Bridge.godRun(`pm path ${pkg}`);
-    const baseLine = pathOut.split("\n").find(l => l.includes("base.apk"));
-    if (baseLine) {
-      const apkPath = baseLine.replace(/package:/g,"").trim();
-      const dest    = `/sdcard/Download/EaquelDumps`;
-      await Bridge.godRun(`mkdir -p ${dest} && cp "${apkPath}" "${dest}/${pkg}_base.apk" && chmod 644 "${dest}/${pkg}_base.apk"`);
-      Terminal.log(`[OK] → ${dest}/${pkg}_base.apk`, "ok");
-    } else {
-      Terminal.log(`[ERR] base.apk not found for ${pkg}`, "err");
-    }
-  },
-
-  async runCmd() {
-    const inp = document.getElementById("term-cmd");
-    const cmd = inp.value.trim();
-    if (!cmd) return;
-    inp.value = "";
-    Terminal.log(`$ ${cmd}`, "sys");
-    const res = await Bridge.godRun(cmd);
-    if (res) res.trim().split("\n").forEach(l => Terminal.log(l, "data"));
-  },
-
-  async retryBoot() {
-    const retryBtn   = document.getElementById("splash-retry-btn");
-    const errDetail  = document.getElementById("splash-err-detail");
-    const statusEl   = document.getElementById("splash-status");
-    retryBtn.style.display    = "none";
-    errDetail.style.display   = "none";
-    statusEl.style.color      = "";
-    statusEl.classList.add("pulse-red");
-
-    ["bridge","root","cfg","ready"].forEach(id => {
-      const el = document.getElementById("step-" + id);
-      if (!el) return;
-      el.classList.remove("done","active","fail");
-      el.querySelector(".step-icon").innerHTML = '<i class="fa-solid fa-minus"></i>';
-      el.querySelector(".step-status").textContent = "—";
+    const pm = await Bridge.godRun("pm list packages -3 2>/dev/null");
+    pm.split("\n").filter(Boolean).forEach(line => {
+        const pkg = line.replace("package:","").trim();
+        if(pkg) state.apps.push({pkg, name: pkg.split(".").pop()});
     });
 
-    Splash.setProgress(0);
-    Splash.setStatus("RETRYING ROOT BRIDGE...");
-    await this.doBoot();
-  },
+    const il2cppCheck = await Bridge.godRun("find /data/app -name 'libil2cpp.so' 2>/dev/null | head -50");
+    const il2cppPkgs = new Set();
+    il2cppCheck.split("\n").forEach(line => {
+        const m = line.match(/\/data\/app\/[^\/]*([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+)/);
+        if(m) il2cppPkgs.add(m[1]);
+    });
 
-  async doBoot() {
-    Terminal.init();
-
-    // ── STEP 1: Bridge detection (max 12 seconds, 60 × 200ms) ──
-    Splash.stepActive("bridge");
-    Splash.setStatus("WAITING FOR ROOT BRIDGE...");
-    Splash.setProgress(5);
-
-    const MAX_ATTEMPTS = 60;
-    const INTERVAL_MS  = 200;
-    let   attempts     = 0;
-    let   bridgeFound  = false;
-
-    while (attempts < MAX_ATTEMPTS) {
-      if (window.ksu || window.mmrl || window.magisk) {
-        bridgeFound = true;
-        break;
-      }
-      attempts++;
-      const elapsed = ((attempts * INTERVAL_MS) / 1000).toFixed(1);
-      const pct     = Math.min(5 + (attempts / MAX_ATTEMPTS) * 30, 35);
-      Splash.setProgress(pct);
-      Splash.setAttempt(`Attempt ${attempts}/${MAX_ATTEMPTS} · ${elapsed}s elapsed`);
-
-      if (attempts === 20) Splash.setStatus("STILL WAITING — KernelSU/Kitsune initializing...");
-      if (attempts === 40) Splash.setStatus("TAKING LONGER THAN USUAL — Please wait...");
-
-      await new Promise(r => setTimeout(r, INTERVAL_MS));
+    if(il2cppPkgs.size > 0){
+        state.apps = state.apps.filter(a => il2cppPkgs.has(a.pkg));
+        il2cppPkgs.forEach(pkg => {
+            if(!state.apps.some(a => a.pkg === pkg))
+                state.apps.push({pkg, name: pkg.split(".").pop()});
+        });
     }
 
-    const bridgeName = window.ksu ? "KernelSU" : window.mmrl ? "MMRL" : window.magisk ? "Magisk" : null;
+    state.apps = [...new Map(state.apps.map(a=>[a.pkg,a])).values()];
+    renderTab(0);
+    Toast.show(state.apps.length + " IL2CPP OYUN BULUNDU");
+}
 
-    Splash.setAttempt("");
+function renderApps(){
+    let html = '<div class="panel p-6"><div class="flex justify-between mb-5"><h2 class="text-red-500 text-sm font-bold tracking-widest">HEDEF OYUNLAR</h2><div class="text-xs bg-red-950 px-5 py-1 rounded-3xl">' + state.apps.length + ' BULUNDU</div></div><input id="search-input" type="text" placeholder="Oyun ara..." class="w-full bg-black border border-red-900 rounded-3xl px-6 py-4 text-sm focus:border-red-500 mb-5" oninput="state.query=this.value;renderTab(0)">';
+    const q = state.query.toLowerCase();
+    const filtered = state.apps.filter(a=>!q||a.pkg.toLowerCase().includes(q)||a.name.toLowerCase().includes(q));
+    filtered.forEach(a=>{
+        const sel = state.target===a.pkg ? "ring-2 ring-red-500 bg-red-950/60" : "";
+        html += '<div onclick="selectTarget(\'' + a.pkg + '\',\'' + a.name + '\')" class="card flex items-center gap-4 p-5 rounded-3xl border border-red-900/40 ' + sel + ' mb-4"><div class="w-14 h-14 bg-gradient-to-br from-red-900 to-black rounded-3xl flex items-center justify-center text-3xl"><i class="fa-solid fa-gamepad"></i></div><div class="flex-1"><div class="font-semibold text-white">' + a.name + '</div><div class="text-red-400 text-xs truncate">' + a.pkg + '</div></div>' + (state.target===a.pkg ? '<i class="fa-solid fa-circle-check text-green-400 text-4xl"></i>' : '') + '</div>';
+    });
+    if(filtered.length===0) html += '<div class="text-center py-16 text-red-400/80">Henüz oyun bulunamadı<br><span class="text-xs">TARA butonuna bas</span></div>';
+    html += '</div>';
+    return html;
+}
 
-    if (!bridgeFound) {
-      Splash.stepFail("bridge", "N/A");
-      Splash.stepFail("root",   "NO BRIDGE");
-      Splash.stepFail("cfg",    "SKIP");
-      Splash.stepFail("ready",  "SKIP");
-      Splash.setProgress(100);
-      Splash.showError();
-      return;
+function selectTarget(pkg,name){state.target=pkg;renderTab(0);}
+
+async function inject(){
+    if(!state.target){Toast.show("Önce oyun seç");return;}
+    const cfg = "pkg=" + state.target + "\noutdir=" + state.config.outputDir + "\ngen_cpp=" + (state.config.genCpp?1:0) + "\ngen_frida=" + (state.config.genFrida?1:0);
+    const escaped = cfg.replace(/'/g,"'\\''");
+
+    const modPaths = [
+        "/data/adb/modules/eaqueldumper",
+        "/data/adb/ksu/modules/eaqueldumper"
+    ];
+    for(const p of modPaths){
+        const r = await Bridge.godRun('[ -d "' + p + '" ] && echo exists');
+        if(r.includes("exists")){
+            await Bridge.godRun("printf '" + escaped + "' > \"" + p + "/target.cfg\"");
+            break;
+        }
     }
 
-    Splash.stepDone("bridge", bridgeName);
-    Splash.setProgress(40);
+    if(state.config.autoKill) await Bridge.godRun("am force-stop " + state.target);
+    await Bridge.godRun("monkey -p " + state.target + " -c android.intent.category.LAUNCHER 1");
+    Toast.show("ZYGISK ENJEKTE EDİLDİ • DUMP BAŞLADI");
+    renderTab(3);
+}
 
-    // ── STEP 2: Root verification ──
-    Splash.stepActive("root");
-    Splash.setStatus("VERIFYING ROOT ACCESS...");
+async function killTarget(){if(!state.target)return;await Bridge.godRun("am force-stop " + state.target);Toast.show("Oyun kapatıldı");}
 
-    const idCheck = await Bridge.godRun("id");
-    const hasRoot = idCheck.includes("uid=0") || idCheck.includes("root");
+async function pullFile(f){
+    if(!state.target)return;
+    const d = state.config.outputDir;
+    const cmd = 'mkdir -p /sdcard/EaquelDumps && cp "' + d + '/' + f + '" "/sdcard/EaquelDumps/' + state.target + '_' + f + '" 2>/dev/null && echo "[OK] ' + f + ' çekildi" || echo "[ERR] ' + f + ' yok"';
+    const r = await Bridge.godRun(cmd);
+    Toast.show(r.includes("OK") ? "Dosya çekildi!" : r);
+}
 
-    if (hasRoot) {
-      Splash.stepDone("root", "uid=0");
-      Splash.setProgress(65);
+async function pullAll(){await pullFile("dump.cs");await pullFile("dump.h");await pullFile("dump.js");}
 
-      // ── STEP 3: Config load ──
-      Splash.stepActive("cfg");
-      Splash.setStatus("LOADING CONFIGURATION...");
-      await Config.load();
-      Splash.stepDone("cfg", "OK");
-      Splash.setProgress(85);
-
-      // ── STEP 4: Ready ──
-      Splash.stepActive("ready");
-      Splash.setStatus("SYSTEM READY");
-      await new Promise(r => setTimeout(r, 300));
-      Splash.stepDone("ready", "✓");
-      Splash.setProgress(100);
-
-      AppState.root = true;
-      const badge = document.getElementById("root-badge");
-      badge.className = "badge-root-on px-2.5 py-1.5 rounded-lg text-[9px] font-bold flex items-center gap-1.5";
-      badge.innerHTML = `<i class="fa-solid fa-shield-check"></i> ROOT · ${bridgeName ?? "SU"}`;
-      Terminal.log(`Root bridge: ${bridgeName ?? "unknown"} — uid=0 confirmed.`, "ok");
-
-      await new Promise(r => setTimeout(r, 400));
-      Splash.dismiss();
-    } else {
-      Splash.stepFail("root", "DENIED");
-      Splash.setProgress(100);
-      const diag = await Bridge.diagnose();
-      Terminal.log("Root check failed — id=" + (idCheck || "empty"), "err");
-      Terminal.log("DIAG: " + diag, "err");
-      Splash.showError();
+async function pullApk(){
+    if(!state.target)return;
+    const p = await Bridge.godRun("pm path " + state.target);
+    const line = p.split("\n").find(l=>l.includes("base.apk"));
+    if(line){
+        const apk = line.replace("package:","").trim();
+        await Bridge.godRun('cp "' + apk + '" "/sdcard/EaquelDumps/' + state.target + '_base.apk"');
+        Toast.show("BASE.APK çekildi");
     }
-  },
+}
 
-  async boot() {
-    await this.doBoot();
-  }
-};
+function runTerm(){
+    const input = document.getElementById("term-input");
+    const cmd = input.value.trim();
+    if(!cmd) return;
+    input.value = "";
+    const out = document.getElementById("term-out");
+    out.innerHTML += '<div class="text-red-400">[' + new Date().toLocaleTimeString() + '] $ ' + cmd + '</div>';
+    Bridge.godRun(cmd).then(res=>{
+        out.innerHTML += '<div class="text-gray-200">' + (res || "[çıktı yok]") + '</div>';
+        out.scrollTop = out.scrollHeight;
+    });
+}
 
-// ── LOGCAT POLLER ──────────────────────────────────────────────────────────
-let _lastLogLines = new Set();
-setInterval(async () => {
-  if (!AppState.root) return;
-  const out = await Bridge.godRun("logcat -d -s Eaquel:* 2>/dev/null | tail -n 20");
-  if (!out || out.length < 5 || out.includes("not found")) return;
-  const lines = out.trim().split("\n").filter(l => l.includes("Eaquel"));
-  lines.forEach(line => {
-    const trimmed = line.trim();
-    if (!trimmed || _lastLogLines.has(trimmed)) return;
-    _lastLogLines.add(trimmed);
-    if (_lastLogLines.size > 200) _lastLogLines = new Set([..._lastLogLines].slice(-100));
-    const level = trimmed.includes("E Eaquel") ? "err" : trimmed.includes("W Eaquel") ? "sys" : "zg";
-    Terminal.log(`[ZYGISK] ${trimmed}`, level);
-    if (trimmed.includes("dump.cs written")) {
-      Terminal.log("Dump complete! Go to Extract tab to pull files.", "ok");
+let livePoller = null;
+function startLiveLog(){
+    if(livePoller) return;
+    livePoller = setInterval(async()=>{
+        if(!state.root || !state.target) return;
+        const log = await Bridge.godRun("logcat -d -s Eaquel:* 2>/dev/null | tail -n 30");
+        if(log){
+            const lines = log.split("\n").filter(l=>l.length>10);
+            lines.forEach(l=>{
+                if(!state.logs.includes(l)){
+                    state.logs.push(l);
+                    const out = document.getElementById("term-out");
+                    if(out) out.innerHTML += '<div class="text-purple-400">' + l + '</div>';
+                    if(out) out.scrollTop = out.scrollHeight;
+                }
+            });
+        }
+    },1000);
+}
+
+function retryBoot(){
+    const badge = document.getElementById("root-badge");
+    badge.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> DENİYOR';
+    setTimeout(boot,500);
+}
+
+function switchTab(n){
+    const main = document.getElementById("main");
+    document.querySelectorAll(".nav-btn").forEach((b,i)=>b.classList.toggle("active",i===n));
+    if(n===0){
+        main.innerHTML = '<div class="space-y-6">' + renderApps() + '<div onclick="scanApps()" class="panel p-6 cursor-pointer"><button class="btn-primary w-full py-7 text-2xl font-bold rounded-3xl flex items-center justify-center gap-5"><i class="fa-solid fa-radar"></i>IL2CPP OYUNLARINI TARA</button></div>' + (state.target ? '<button onclick="inject()" class="btn-primary w-full py-7 text-xl font-bold rounded-3xl">ENJEKTE ET → ' + state.target + '</button>' : '') + '</div>';
     }
-  });
-  const running = AppState.apps.filter(a => a.baseAddr).length;
-  document.getElementById("stat-il2cpp").textContent = running;
-}, 2000);
+    if(n===1){
+        main.innerHTML = '<div class="panel p-7 space-y-8"><h2 class="text-red-500 text-sm font-bold tracking-widest">KONFIGÜRASYON</h2><div><label class="block text-xs text-red-400 mb-2">ÇIKIŞ KLASÖRÜ</label><input value="' + state.config.outputDir + '" class="w-full bg-black border border-red-900 rounded-3xl px-7 py-6 text-sm" onchange="state.config.outputDir=this.value"></div><div class="flex justify-between items-center"><span class="text-base">C++ Header Üret</span><input type="checkbox" ' + (state.config.genCpp?"checked":"") + ' onchange="state.config.genCpp=this.checked" class="w-14 h-8 accent-red-600"></div><div class="flex justify-between items-center"><span class="text-base">Frida Script Üret</span><input type="checkbox" ' + (state.config.genFrida?"checked":"") + ' onchange="state.config.genFrida=this.checked" class="w-14 h-8 accent-red-600"></div><div class="flex justify-between items-center"><span class="text-base">Otomatik Kapat</span><input type="checkbox" ' + (state.config.autoKill?"checked":"") + ' onchange="state.config.autoKill=this.checked" class="w-14 h-8 accent-red-600"></div><button onclick="saveConfig()" class="btn-primary w-full py-6 rounded-3xl text-xl mt-4">KAYDET VE UYGULA</button></div>';
+    }
+    if(n===2){
+        main.innerHTML = '<div class="space-y-7"><div class="panel p-7"><h2 class="text-red-500 text-sm font-bold tracking-widest mb-6">DUMP DOSYALARINI ÇEK</h2><button onclick="pullFile(\'dump.cs\')" class="w-full py-6 border border-green-500 text-green-400 rounded-3xl mb-4 flex justify-between px-7 items-center"><span class="font-semibold">dump.cs</span><i class="fa-solid fa-download text-xl"></i></button><button onclick="pullFile(\'dump.h\')" class="w-full py-6 border border-blue-500 text-blue-400 rounded-3xl mb-4 flex justify-between px-7 items-center"><span class="font-semibold">dump.h</span><i class="fa-solid fa-download text-xl"></i></button><button onclick="pullFile(\'dump.js\')" class="w-full py-6 border border-purple-500 text-purple-400 rounded-3xl mb-4 flex justify-between px-7 items-center"><span class="font-semibold">dump.js</span><i class="fa-solid fa-download text-xl"></i></button><button onclick="pullAll()" class="btn-primary w-full py-6 rounded-3xl">HEPSİNİ ÇEK</button></div><div class="panel p-7"><button onclick="pullApk()" class="w-full py-6 border border-amber-400 text-amber-400 rounded-3xl flex justify-between px-7"><span class="font-semibold">BASE.APK ÇEK</span><i class="fa-solid fa-file-export text-xl"></i></button></div></div>';
+    }
+    if(n===3){
+        main.innerHTML = '<div class="panel flex flex-col h-[calc(100dvh-200px)]"><div class="px-6 py-5 border-b border-red-900 flex justify-between text-xs font-bold"><span>ZYGISK LIVE TERM</span><i onclick="document.getElementById(\'term-out\').innerHTML=\'\';state.logs=[]" class="fa-solid fa-trash cursor-pointer"></i></div><div id="term-out" class="flex-1 p-6 term overflow-y-auto text-gray-200"></div><div class="p-5 border-t border-red-900 flex"><input id="term-input" placeholder="Komut gir..." class="flex-1 bg-black border border-red-900 rounded-3xl px-7 py-5 text-sm focus:outline-none" onkeypress="if(event.key===\'Enter\')runTerm()"><button onclick="runTerm()" class="ml-4 px-9 bg-red-600 rounded-3xl font-bold text-lg">ÇALIŞTIR</button></div></div>';
+        startLiveLog();
+    }
+}
 
-window.onload = () => Core.boot();
-
-setInterval(async () => {
-  if (!AppState.root || AppState.apps.length === 0) return;
-  for (const app of AppState.apps) {
-    await Core.updateBaseAddress(app.pkg);
-  }
-  const running = AppState.apps.filter(a => a.baseAddr).length;
-  document.getElementById("stat-il2cpp").textContent = running;
-}, 8000);
+document.addEventListener("DOMContentLoaded",()=>{boot()});
 </script>
 </body>
 </html>

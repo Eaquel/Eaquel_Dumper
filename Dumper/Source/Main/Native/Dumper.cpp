@@ -25,9 +25,6 @@
 #include <array>
 #include <xdl.h>
 
-// ── Safe string helpers ────────────────────────────────────────────────────
-// All il2cpp string getters can return nullptr on stripped/obfuscated builds.
-// These wrappers guarantee a valid C string is always returned.
 static inline const char* safeStr(const char* s, const char* fallback = "") {
     return (s && *s) ? s : fallback;
 }
@@ -159,10 +156,6 @@ static void populateFunctionTable(void* handle) {
 
 } // namespace il2cpp_api
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Method/field/type stringification
-// ─────────────────────────────────────────────────────────────────────────────
-
 static std::string buildMethodModifier(uint32_t flags) {
     std::stringstream out;
     switch (flags & METHOD_ATTRIBUTE_MEMBER_ACCESS_MASK) {
@@ -204,7 +197,6 @@ struct MethodEntry {
     std::vector<std::pair<std::string, std::string>> params;
 };
 
-// ── CRASH FIX: every class/type getter guarded with null checks ──
 static std::string safeClassName(Il2CppClass* klass) {
     if (!klass) return "object";
     auto& api = il2cpp_api::g_api;
@@ -228,7 +220,7 @@ static std::vector<MethodEntry> collectMethods(Il2CppClass* klass) {
             e.modifier = buildMethodModifier(api.method_get_flags(method, &iflags));
         if (api.method_get_name)
             e.name = safeStr(api.method_get_name(method));
-        if (e.name.empty()) continue; // skip unnamed methods
+        if (e.name.empty()) continue;
 
         if (api.method_get_return_type && api.class_from_type) {
             auto ret = api.method_get_return_type(method);
@@ -365,13 +357,13 @@ static std::string dumpType(const Il2CppType* type) {
     auto klass = api.class_from_type(type);
     if (!klass) return {};
 
-    auto  flags      = api.class_get_flags      ? api.class_get_flags(klass)      : 0;
-    auto  is_vt      = api.class_is_valuetype   ? api.class_is_valuetype(klass)   : false;
-    auto  is_enum    = api.class_is_enum        ? api.class_is_enum(klass)        : false;
-    auto  is_iface   = api.class_is_interface   ? api.class_is_interface(klass)   : false;
-    auto  is_abstract= api.class_is_abstract    ? api.class_is_abstract(klass)    : false;
-    auto  ns         = api.class_get_namespace  ? safeStr(api.class_get_namespace(klass)) : "";
-    auto  cn         = api.class_get_name       ? safeStr(api.class_get_name(klass), "UnknownClass") : "UnknownClass";
+    auto  flags       = api.class_get_flags      ? api.class_get_flags(klass)      : 0;
+    auto  is_vt       = api.class_is_valuetype   ? api.class_is_valuetype(klass)   : false;
+    auto  is_enum     = api.class_is_enum        ? api.class_is_enum(klass)        : false;
+    auto  is_iface    = api.class_is_interface   ? api.class_is_interface(klass)   : false;
+    auto  is_abstract = api.class_is_abstract    ? api.class_is_abstract(klass)    : false;
+    auto  ns          = api.class_get_namespace  ? safeStr(api.class_get_namespace(klass)) : "";
+    auto  cn          = api.class_get_name       ? safeStr(api.class_get_name(klass), "UnknownClass") : "UnknownClass";
 
     std::stringstream out;
     out << "\n// Namespace: " << ns << "\n";
@@ -397,14 +389,13 @@ static std::string dumpType(const Il2CppType* type) {
         out << "sealed ";
     }
 
-    if (is_enum)        out << "enum ";
-    else if (is_iface)  out << "interface ";
-    else if (is_vt)     out << "struct ";
-    else                out << "class ";
+    if (is_enum)       out << "enum ";
+    else if (is_iface) out << "interface ";
+    else if (is_vt)    out << "struct ";
+    else               out << "class ";
 
     out << cn;
 
-    // Base class / interfaces
     if (api.class_get_parent) {
         auto parent = api.class_get_parent(klass);
         if (parent) {
@@ -422,14 +413,8 @@ static std::string dumpType(const Il2CppType* type) {
     return out.str();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Output writers
-// ─────────────────────────────────────────────────────────────────────────────
-
 namespace output {
 
-// Ensure directory exists with correct permissions.
-// Returns true on success.
 static bool ensureDirectory(const char* dir) {
     struct stat st{};
     if (stat(dir, &st) == 0) return S_ISDIR(st.st_mode);
@@ -462,8 +447,8 @@ static void writeCppHeader(
         if (api.class_get_fields) {
             while (auto field = api.class_get_fields(klass, &iter)) {
                 if (!field) continue;
-                auto fname  = api.field_get_name   ? api.field_get_name(field)   : nullptr;
-                auto foffset= api.field_get_offset ? api.field_get_offset(field) : 0;
+                auto fname   = api.field_get_name   ? api.field_get_name(field)   : nullptr;
+                auto foffset = api.field_get_offset ? api.field_get_offset(field) : 0;
                 std::string ftname = "void*";
                 if (api.field_get_type && api.class_from_type) {
                     auto ft = api.field_get_type(field);
@@ -516,10 +501,6 @@ static void writeFridaScript(
 
 } // namespace output
 
-// ─────────────────────────────────────────────────────────────────────────────
-// API init & dump runner
-// ─────────────────────────────────────────────────────────────────────────────
-
 static void runApiInit(void* handle) {
     Dl_info di{};
     if (dladdr(handle, &di))
@@ -530,8 +511,6 @@ static void runApiInit(void* handle) {
     auto& api = il2cpp_api::g_api;
     if (!api.domain_get_assemblies) { LOGE("il2cpp api init failed — aborting"); return; }
 
-    // ── CRASH FIX: guard is_vm_thread before calling it ──
-    // Old code: while (!api.is_vm_thread(nullptr)) — crashes if symbol is null
     constexpr int kMaxWaitSec = 30;
     for (int i = 0; i < kMaxWaitSec; ++i) {
         if (!api.is_vm_thread) {
@@ -539,7 +518,6 @@ static void runApiInit(void* handle) {
             std::this_thread::sleep_for(std::chrono::seconds(2));
             break;
         }
-        // Pass nullptr — valid: returns false when called from non-VM thread
         if (api.is_vm_thread(nullptr)) break;
         LOGI("waiting for il2cpp VM... (%d/%d)", i + 1, kMaxWaitSec);
         std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -560,7 +538,6 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
 
     LOGI("dump started -> %s", out_dir);
 
-    // ── CRASH FIX: try primary dir, fall back to /data/local/tmp ──
     std::string effective_dir = out_dir;
 
     auto tryDir = [&](const std::string& d) -> bool {
@@ -580,8 +557,8 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
     LOGI("runDump: using output dir: %s", effective_dir.c_str());
     const char* dir = effective_dir.c_str();
 
-    size_t ac    = 0;
-    auto domain  = api.domain_get();
+    size_t ac   = 0;
+    auto domain = api.domain_get();
     if (!domain) { LOGE("domain_get returned null"); return; }
     auto assemblies = api.domain_get_assemblies(domain, &ac);
     if (!assemblies || ac == 0) { LOGE("no assemblies found"); return; }
@@ -628,7 +605,7 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
         {
             LOGE("reflection path: required api missing"); return;
         }
-        auto corlib       = api.get_corlib();
+        auto corlib = api.get_corlib();
         if (!corlib) { LOGE("get_corlib returned null"); return; }
         auto asm_class    = api.class_from_name(corlib, "System.Reflection", "Assembly");
         if (!asm_class)   { LOGE("Assembly class not found"); return; }
@@ -668,7 +645,6 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
         }
     }
 
-    // ── Write dump.cs ──
     {
         auto cs_path = effective_dir + "/dump.cs";
         std::ofstream cs(cs_path);
@@ -684,10 +660,6 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
     if (cfg.generate_frida_script) output::writeFridaScript (dir, class_registry);
     LOGI("all outputs written to %s", dir);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// x86 NativeBridge loader
-// ─────────────────────────────────────────────────────────────────────────────
 
 namespace bridge {
 
@@ -742,9 +714,9 @@ static bool loadViaX86(
     const config::DumperConfig& cfg, int api_level, void* data, size_t length
 ) {
     std::this_thread::sleep_for(std::chrono::seconds(5));
-    auto libart   = dlopen("libart.so", RTLD_NOW);
+    auto libart  = dlopen("libart.so", RTLD_NOW);
     if (!libart) return false;
-    auto get_vms  = reinterpret_cast<jint (*)(JavaVM**, jsize, jsize*)>(
+    auto get_vms = reinterpret_cast<jint (*)(JavaVM**, jsize, jsize*)>(
         dlsym(libart, "JNI_GetCreatedJavaVMs"));
     LOGI("JNI_GetCreatedJavaVMs: %p", get_vms);
     if (!get_vms) return false;
@@ -761,8 +733,16 @@ static bool loadViaX86(
     if (!nb) return false;
     auto cb = reinterpret_cast<NativeBridgeCallbacks*>(dlsym(nb, "NativeBridgeItf"));
     if (!cb) return false;
-    int memfd = static_cast<int>(syscall(__NR_memfd_create, "anon", MFD_CLOEXEC));
-    if (memfd < 0) return false;
+
+    // Android 16 uyumlu memfd_create — syscall yerine libc wrapper dene
+    int memfd = -1;
+#if defined(__ANDROID_API__) && __ANDROID_API__ >= 30
+    memfd = memfd_create("anon", MFD_CLOEXEC);
+#endif
+    if (memfd < 0)
+        memfd = static_cast<int>(syscall(__NR_memfd_create, "anon", MFD_CLOEXEC));
+    if (memfd < 0) { LOGE("memfd_create failed errno=%d", errno); return false; }
+
     ftruncate(memfd, static_cast<off_t>(length));
     auto mem = mmap(nullptr, length, PROT_WRITE, MAP_SHARED, memfd, 0);
     if (mem == MAP_FAILED) { close(memfd); return false; }
@@ -786,10 +766,6 @@ static bool loadViaX86(
 
 } // namespace bridge
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Retry logic
-// ─────────────────────────────────────────────────────────────────────────────
-
 namespace {
 
 constexpr int     kMaxRetries  = 10;
@@ -808,11 +784,10 @@ static void hackStart(
     const config::DumperConfig& cfg
 ) {
     for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
-        // ── CRASH FIX: close handle after use ──
         void* handle = xdl_open("libil2cpp.so", XDL_DEFAULT);
         if (handle) {
             runApiInit(handle);
-            xdl_close(handle); // release xdl handle — does NOT unload the library
+            xdl_close(handle);
             runDump(out_dir.c_str(), cfg);
             return;
         }
@@ -840,10 +815,6 @@ static void hackPrepare(
 
 } // anonymous namespace
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Zygisk module
-// ─────────────────────────────────────────────────────────────────────────────
-
 class EaquelDumperModule : public zygisk::ModuleBase {
 public:
     void onLoad(zygisk::Api* api, JNIEnv* env) override {
@@ -853,7 +824,14 @@ public:
 
     void preAppSpecialize(zygisk::AppSpecializeArgs* args) override {
         if (!args) return;
-        // ── CRASH FIX: guard GetStringUTFChars against null jstring ──
+
+        // Denylist kontrolü — process denylist'teyse modülü kapat
+        uint32_t flags = api->getFlags();
+        if (flags & static_cast<uint32_t>(zygisk::StateFlag::PROCESS_ON_DENYLIST)) {
+            api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
+            return;
+        }
+
         const char* pkg = nullptr;
         const char* dir = nullptr;
         if (args->nice_name)    pkg = env->GetStringUTFChars(args->nice_name,    nullptr);
