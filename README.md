@@ -48,9 +48,9 @@
 
 ### Mimari
 
-Proje tek bir header (`Core.h`) ve tek bir kaynak dosyasından (`Dumper.cpp`) oluşur:
+Proje tek bir header (`Core.hpp`) ve tek bir kaynak dosyasından (`Dumper.cpp`) oluşur:
 
-**`Core.h` — Birleşik Başlık**
+**`Core.hpp` — Birleşik Başlık**
 Orijinal IL2CPP tip tanımları, attribute sabitleri ve DO_API makro tablosuna ek olarak iki namespace barındırır:
 - `scanner::` — ARM64 prologue imza tabanlı pattern scanner. Sembolleri silinmiş binary dosyalarda xdl_sym başarısız olduğunda devreye girer.
 - `config::` — `/data/local/tmp/eaquel_config.json` dosyasını runtime'da okuyarak hedef paket adını, çıktı dizinini ve üretim seçeneklerini çözümler. Proje artık `Target.h` içindeki hardcoded sabit kullanmaz.
@@ -94,7 +94,7 @@ Eaquel_Dumper/
 │       ├── AndroidManifest.xml
 │       └── Native/
 │           ├── CMakeLists.txt         ← Tek kaynak: Dumper.cpp
-│           ├── Core.h                 ← Birleşik header (IL2CPP + Scanner + Config)
+│           ├── Core.hpp                ← Birleşik header (IL2CPP + Scanner + Config)
 │           ├── Dumper.cpp             ← Birleşik kaynak (Main + Hack + Dumper)
 │           └── Zygisk.hpp             ← Zygisk API v4
 ├── Base/
@@ -131,9 +131,9 @@ adb push eaquel_config.json /data/local/tmp/
 
 ### Architecture
 
-The project is reduced to a single header (`Core.h`) and a single source file (`Dumper.cpp`):
+The project is reduced to a single header (`Core.hpp`) and a single source file (`Dumper.cpp`):
 
-**`Core.h` — Unified Header**
+**`Core.hpp` — Unified Header**
 Houses the original IL2CPP type definitions, attribute constants and the DO_API macro table, plus two namespaces:
 - `scanner::` — ARM64 prologue-signature pattern scanner. Activates as a fallback when `xdl_sym` fails on stripped binaries.
 - `config::` — Reads `/data/local/tmp/eaquel_config.json` at runtime to resolve target package, output directory and generation flags. The project no longer uses the hardcoded `Target.h` constant.
@@ -173,7 +173,7 @@ Eaquel_Dumper/
 │   ├── build.gradle.kts               ← AGP 9.1.0 · Gradle 9.4.1
 │   └── Source/Main/Native/
 │       ├── CMakeLists.txt             ← Single source: Dumper.cpp
-│       ├── Core.h                     ← Unified header (IL2CPP + Scanner + Config)
+│       ├── Core.hpp                    ← Unified header (IL2CPP + Scanner + Config)
 │       ├── Dumper.cpp                 ← Unified source (Main + Hack + Dumper)
 │       └── Zygisk.hpp
 ├── Base/module.prop
@@ -199,7 +199,7 @@ adb push eaquel_config.json /data/local/tmp/
 | AGP | 9.1.0 |
 | Gradle | 9.4.1 |
 | NDK | r29 · 29.0.14206865 |
-| CMake | 3.22.1+ |
+| CMake | 4.0.0+ |
 | Java | 21 Temurin LTS |
 | C++ Standard | C++20 |
 | xDL | 2.3.0 |
@@ -217,9 +217,9 @@ adb push eaquel_config.json /data/local/tmp/
 
 ### Архитектура
 
-Проект сведён к одному заголовочному файлу (`Core.h`) и одному исходному файлу (`Dumper.cpp`):
+Проект сведён к одному заголовочному файлу (`Core.hpp`) и одному исходному файлу (`Dumper.cpp`):
 
-**`Core.h`** — объединённый заголовок с типами IL2CPP, константами атрибутов, DO_API-таблицей и двумя пространствами имён:
+**`Core.hpp`** — объединённый заголовок с типами IL2CPP, константами атрибутов, DO_API-таблицей и двумя пространствами имён:
 - `scanner::` — ARM64 pattern scanner по прологу функций (fallback при strip-бинарниках).
 - `config::` — читает `/data/local/tmp/eaquel_config.json` во время выполнения.
 
@@ -263,9 +263,9 @@ adb push eaquel_config.json /data/local/tmp/
 
 ### 架构
 
-项目精简为一个头文件（`Core.h`）和一个源文件（`Dumper.cpp`）：
+项目精简为一个头文件（`Core.hpp`）和一个源文件（`Dumper.cpp`）：
 
-**`Core.h`** — 统一头文件，包含 IL2CPP 类型定义、属性常量、DO_API 宏表以及两个命名空间：
+**`Core.hpp`** — 统一头文件，包含 IL2CPP 类型定义、属性常量、DO_API 宏表以及两个命名空间：
 - `scanner::` — 基于 ARM64 函数序言签名的模式扫描器（stripped 二进制文件的回退方案）。
 - `config::` — 运行时读取 `/data/local/tmp/eaquel_config.json`。
 
@@ -309,9 +309,9 @@ adb push eaquel_config.json /data/local/tmp/
 
 ### Architektur
 
-Das Projekt besteht aus einer einzigen Header-Datei (`Core.h`) und einer einzigen Quelldatei (`Dumper.cpp`):
+Das Projekt besteht aus einer einzigen Header-Datei (`Core.hpp`) und einer einzigen Quelldatei (`Dumper.cpp`):
 
-**`Core.h`** — Vereinheitlichter Header mit IL2CPP-Typdeklarationen, Attributkonstanten, DO_API-Makrotabelle und zwei Namespaces:
+**`Core.hpp`** — Vereinheitlichter Header mit IL2CPP-Typdeklarationen, Attributkonstanten, DO_API-Makrotabelle und zwei Namespaces:
 - `scanner::` — ARM64-Pattern-Scanner basierend auf Funktionsprologen (Fallback für gestrippte Binärdateien).
 - `config::` — Liest `/data/local/tmp/eaquel_config.json` zur Laufzeit.
 
@@ -350,9 +350,9 @@ adb push eaquel_config.json /data/local/tmp/
 
 ### Architecture
 
-Le projet se résume à un seul en-tête (`Core.h`) et un seul fichier source (`Dumper.cpp`):
+Le projet se résume à un seul en-tête (`Core.hpp`) et un seul fichier source (`Dumper.cpp`):
 
-**`Core.h`** — En-tête unifié avec les types IL2CPP, les constantes d'attributs, la table de macros DO_API et deux espaces de noms :
+**`Core.hpp`** — En-tête unifié avec les types IL2CPP, les constantes d'attributs, la table de macros DO_API et deux espaces de noms :
 - `scanner::` — Scanner de patterns ARM64 basé sur les prologues de fonctions (repli pour les binaires strippés).
 - `config::` — Lit `/data/local/tmp/eaquel_config.json` à l'exécution.
 
@@ -391,9 +391,9 @@ adb push eaquel_config.json /data/local/tmp/
 
 ### Arquitectura
 
-El proyecto se reduce a un único encabezado (`Core.h`) y un único archivo fuente (`Dumper.cpp`):
+El proyecto se reduce a un único encabezado (`Core.hpp`) y un único archivo fuente (`Dumper.cpp`):
 
-**`Core.h`** — Encabezado unificado con tipos IL2CPP, constantes de atributos, tabla de macros DO_API y dos espacios de nombres:
+**`Core.hpp`** — Encabezado unificado con tipos IL2CPP, constantes de atributos, tabla de macros DO_API y dos espacios de nombres:
 - `scanner::` — Escáner de patrones ARM64 basado en prólogos de funciones (respaldo para binarios despojados).
 - `config::` — Lee `/data/local/tmp/eaquel_config.json` en tiempo de ejecución.
 
@@ -432,9 +432,9 @@ adb push eaquel_config.json /data/local/tmp/
 
 ### आर्किटेक्चर
 
-प्रोजेक्ट एक एकल हेडर (`Core.h`) और एक एकल सोर्स फ़ाइल (`Dumper.cpp`) तक सीमित है:
+प्रोजेक्ट एक एकल हेडर (`Core.hpp`) और एक एकल सोर्स फ़ाइल (`Dumper.cpp`) तक सीमित है:
 
-**`Core.h`** — एकीकृत हेडर जिसमें IL2CPP टाइप परिभाषाएँ, attribute constants, DO_API macro table और दो namespaces हैं:
+**`Core.hpp`** — एकीकृत हेडर जिसमें IL2CPP टाइप परिभाषाएँ, attribute constants, DO_API macro table और दो namespaces हैं:
 - `scanner::` — ARM64 function prologue आधारित pattern scanner (stripped बाइनरी के लिए fallback)।
 - `config::` — रनटाइम पर `/data/local/tmp/eaquel_config.json` पढ़ता है।
 
@@ -465,9 +465,9 @@ adb push eaquel_config.json /data/local/tmp/
 
 ### アーキテクチャ
 
-プロジェクトは単一のヘッダー (`Core.h`) と単一のソースファイル (`Dumper.cpp`) に集約されています:
+プロジェクトは単一のヘッダー (`Core.hpp`) と単一のソースファイル (`Dumper.cpp`) に集約されています:
 
-**`Core.h`** — IL2CPP 型定義、属性定数、DO_API マクロテーブル、および2つの名前空間を含む統合ヘッダー:
+**`Core.hpp`** — IL2CPP 型定義、属性定数、DO_API マクロテーブル、および2つの名前空間を含む統合ヘッダー:
 - `scanner::` — ARM64 関数プロローグシグネチャベースのパターンスキャナー（stripped バイナリのフォールバック）。
 - `config::` — ランタイムに `/data/local/tmp/eaquel_config.json` を読み込む。
 
@@ -506,9 +506,9 @@ adb push eaquel_config.json /data/local/tmp/
 
 ### 아키텍처
 
-프로젝트는 단일 헤더 (`Core.h`)와 단일 소스 파일 (`Dumper.cpp`)로 구성됩니다:
+프로젝트는 단일 헤더 (`Core.hpp`)와 단일 소스 파일 (`Dumper.cpp`)로 구성됩니다:
 
-**`Core.h`** — IL2CPP 타입 정의, 속성 상수, DO_API 매크로 테이블과 두 개의 네임스페이스를 포함하는 통합 헤더:
+**`Core.hpp`** — IL2CPP 타입 정의, 속성 상수, DO_API 매크로 테이블과 두 개의 네임스페이스를 포함하는 통합 헤더:
 - `scanner::` — ARM64 함수 프롤로그 시그니처 기반 패턴 스캐너 (stripped 바이너리 폴백).
 - `config::` — 런타임에 `/data/local/tmp/eaquel_config.json`을 읽음.
 

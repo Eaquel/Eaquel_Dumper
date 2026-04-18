@@ -4,11 +4,9 @@ compileSdk = "36"
 minSdk = "30"
 targetSdk = "36"
 ndkVersion = "29.0.14206865"
-cmakeVersion = "3.22.1"
-xdl = "2.3.0"
+cmakeVersion = "4.0.0"
 
 [libraries]
-xdl = { group = "io.github.hexhacking", name = "xdl", version.ref = "xdl" }
 
 [plugins]
 android-library = { id = "com.android.library", version.ref = "agp" }

@@ -1,6 +1,6 @@
 #define DO_API(r, n, p) r (*n) p = nullptr;
 #define DO_API_NO_RETURN(r, n, p) r (*n) p = nullptr;
-#include "Core.h"
+#include "Core.hpp"
 #undef DO_API
 #undef DO_API_NO_RETURN
 
@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cinttypes>
+#include <atomic>
 #include <string>
 #include <vector>
 #include <sstream>
@@ -23,10 +24,315 @@
 #include <linux/unistd.h>
 #include <unistd.h>
 #include <array>
-#include <xdl.h>
+#include <signal.h>
+#include <link.h>
+#include <mutex>
 
 static inline const char* safeStr(const char* s, const char* fallback = "") {
     return (s && *s) ? s : fallback;
+}
+
+static void runApiInit(uintptr_t base);
+static void runDump(const char* out_dir, const config::DumperConfig& cfg);
+
+static std::string          s_early_out_dir;
+static config::DumperConfig s_early_cfg;
+static std::atomic<bool>    s_early_hook_fired{false};
+
+namespace hook_engine {
+
+static constexpr size_t kPageSize = 4096;
+static uintptr_t alignDown(uintptr_t a) { return a & ~(kPageSize - 1u); }
+static uintptr_t alignUp  (uintptr_t a) { return (a + kPageSize - 1u) & ~(kPageSize - 1u); }
+
+static bool mprotectRW(uintptr_t addr, size_t len) {
+    return mprotect(reinterpret_cast<void*>(alignDown(addr)),
+                    alignUp(len + (addr - alignDown(addr))),
+                    PROT_READ | PROT_WRITE | PROT_EXEC) == 0;
+}
+static bool mprotectRX(uintptr_t addr, size_t len) {
+    return mprotect(reinterpret_cast<void*>(alignDown(addr)),
+                    alignUp(len + (addr - alignDown(addr))),
+                    PROT_READ | PROT_EXEC) == 0;
+}
+static void flushCache(uintptr_t addr, size_t len) {
+    __builtin___clear_cache(reinterpret_cast<char*>(addr),
+                            reinterpret_cast<char*>(addr + len));
+}
+
+static void* allocTrampolinePage(uintptr_t near_addr) {
+    uintptr_t lo = (near_addr > 0x8000000u) ? (near_addr - 0x8000000u) : 0;
+    uintptr_t hi = near_addr + 0x8000000u;
+    FILE* f = fopen("/proc/self/maps", "r");
+    if (!f) return nullptr;
+    uintptr_t prev_end = lo;
+    void* result = nullptr;
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        uintptr_t s = 0, e = 0;
+        if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &s, &e) != 2) continue;
+        if (s > hi) break;
+        if (s > prev_end && (s - prev_end) >= kPageSize) {
+            uintptr_t try_addr = (prev_end + kPageSize - 1) & ~(kPageSize - 1u);
+            if (try_addr + kPageSize <= s) {
+                void* p = mmap(reinterpret_cast<void*>(try_addr), kPageSize,
+                               PROT_READ | PROT_WRITE | PROT_EXEC,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+                if (p != MAP_FAILED) { result = p; break; }
+            }
+        }
+        prev_end = e;
+    }
+    fclose(f);
+    if (!result) {
+        result = mmap(nullptr, kPageSize, PROT_READ | PROT_WRITE | PROT_EXEC,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (result == MAP_FAILED) result = nullptr;
+    }
+    return result;
+}
+
+#if defined(__aarch64__)
+static constexpr size_t kHookSize = 16;
+struct Trampoline { uint8_t saved[kHookSize]; uint32_t ldr_x17; uint32_t br_x17; uint64_t return_addr; };
+
+[[nodiscard]] bool installInlineHook(void* target, void* hook, void** orig_out) {
+    auto tgt = reinterpret_cast<uintptr_t>(target);
+    if (!scanner::isReadableAddress(tgt)) return false;
+    auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
+    if (!tramp_page) { LOGE("hook: trampoline alloc failed"); return false; }
+    auto* tramp = reinterpret_cast<Trampoline*>(tramp_page);
+    memcpy(tramp->saved, reinterpret_cast<void*>(tgt), kHookSize);
+    tramp->ldr_x17    = 0x58000051u;
+    tramp->br_x17     = 0xD61F0220u;
+    tramp->return_addr = static_cast<uint64_t>(tgt + kHookSize);
+    flushCache(reinterpret_cast<uintptr_t>(tramp), sizeof(Trampoline));
+    if (!mprotectRW(tgt, kHookSize)) { LOGE("hook: mprotect RW failed"); return false; }
+    auto* dst = reinterpret_cast<uint8_t*>(tgt);
+    uint32_t ldr = 0x58000051u, br = 0xD61F0220u;
+    memcpy(dst,     &ldr, 4); memcpy(dst + 4, &br, 4);
+    uint64_t hook_addr = reinterpret_cast<uint64_t>(hook);
+    memcpy(dst + 8, &hook_addr, 8);
+    flushCache(tgt, kHookSize); mprotectRX(tgt, kHookSize);
+    if (orig_out) *orig_out = reinterpret_cast<void*>(tramp);
+    LOGI("hook[arm64]: target=%p hook=%p tramp=%p", target, hook, tramp);
+    return true;
+}
+#elif defined(__arm__)
+static constexpr size_t kHookSize = 8;
+
+[[nodiscard]] bool installInlineHook(void* target, void* hook, void** orig_out) {
+    auto tgt_thumb = reinterpret_cast<uintptr_t>(target);
+    auto tgt       = tgt_thumb & ~1u;
+    if (!scanner::isReadableAddress(tgt)) return false;
+    auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
+    if (!tramp_page) { LOGE("hook[arm32]: trampoline alloc failed"); return false; }
+    memcpy(tramp_page, reinterpret_cast<void*>(tgt), kHookSize);
+    const uint8_t jback[] = { 0xDF, 0xF8, 0x00, 0xF0 };
+    memcpy(tramp_page + kHookSize, jback, 4);
+    uint32_t ret_addr = static_cast<uint32_t>(tgt + kHookSize) | 1u;
+    memcpy(tramp_page + kHookSize + 4, &ret_addr, 4);
+    flushCache(reinterpret_cast<uintptr_t>(tramp_page), kHookSize + 8);
+    if (!mprotectRW(tgt, kHookSize)) { LOGE("hook[arm32]: mprotect RW failed"); return false; }
+    const uint8_t ldr_pc[] = { 0xDF, 0xF8, 0x00, 0xF0 };
+    memcpy(reinterpret_cast<void*>(tgt), ldr_pc, 4);
+    uint32_t hook_addr = reinterpret_cast<uint32_t>(hook) | 1u;
+    memcpy(reinterpret_cast<void*>(tgt + 4), &hook_addr, 4);
+    flushCache(tgt, kHookSize); mprotectRX(tgt, kHookSize);
+    if (orig_out) *orig_out = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(tramp_page) | 1u);
+    LOGI("hook[arm32]: target=%p hook=%p tramp=%p", target, hook, tramp_page);
+    return true;
+}
+#else
+[[nodiscard]] bool installInlineHook(void*, void*, void**) { return false; }
+#endif
+
+[[nodiscard]] bool patchGotSlot(void* target_fn, void* hook_fn, void** orig_out) {
+    Dl_info di{};
+    if (!dladdr(reinterpret_cast<void*>(&patchGotSlot), &di) || !di.dli_fbase) {
+        LOGE("GOT patch: dladdr failed"); return false;
+    }
+    auto self_base = reinterpret_cast<uintptr_t>(di.dli_fbase);
+    FILE* maps = fopen("/proc/self/maps", "r");
+    if (!maps) return false;
+    char line[512];
+    while (fgets(line, sizeof(line), maps)) {
+        uintptr_t seg_s = 0, seg_e = 0; char perms[8] = {};
+        if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR " %7s", &seg_s, &seg_e, perms) < 3) continue;
+        if (perms[1] != 'w') continue;
+        if (seg_s < self_base || seg_s > self_base + 0x8000000u) continue;
+        for (uintptr_t addr = seg_s; addr + sizeof(void*) <= seg_e; addr += sizeof(void*)) {
+            void** slot = reinterpret_cast<void**>(addr);
+            if (*slot != target_fn) continue;
+            uintptr_t page = alignDown(addr);
+            if (mprotect(reinterpret_cast<void*>(page), kPageSize, PROT_READ | PROT_WRITE) != 0) continue;
+            if (orig_out) *orig_out = *slot;
+            *slot = hook_fn;
+            mprotect(reinterpret_cast<void*>(page), kPageSize, PROT_READ);
+            LOGI("GOT patch: slot=0x%" PRIxPTR " new=%p", addr, hook_fn);
+            fclose(maps); return true;
+        }
+    }
+    fclose(maps);
+    LOGW("GOT patch: slot for %p not found", target_fn);
+    return false;
+}
+
+}
+
+static void installSigsegvHandler() {
+    struct sigaction sa{};
+    sa.sa_sigaction = scanner::sigsegv_handler;
+    sa.sa_flags     = SA_SIGINFO | SA_RESETHAND;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, nullptr);
+}
+
+namespace metadata_hook {
+
+using MetadataLoadFn = void* (*)(const char* path, size_t* out_size);
+
+static MetadataLoadFn    s_orig_load = nullptr;
+static std::atomic<bool> s_fired{false};
+static std::string       s_dump_dir;
+static std::mutex        s_mutex;
+
+static void persistDecryptedMetadata(const void* data, size_t size, const char* src_path) {
+    if (!data || size < 4) return;
+
+    auto* buf   = reinterpret_cast<const uint8_t*>(data);
+    auto  state = entropy::analyzeBuffer(buf, size);
+
+    std::vector<uint8_t> plaintext;
+    if (state == entropy::MetadataState::Encrypted) {
+        LOGI("[MetaHook] Buffer encrypted — running XOR key discovery");
+        auto key = entropy::discoverXorKey(buf, size);
+        if (key.found && key.score >= 2) {
+            plaintext = entropy::decryptBuffer(buf, size, key);
+            LOGI("[MetaHook] Decryption applied key_len=%zu score=%d", key.key_len, key.score);
+        } else {
+            LOGW("[MetaHook] XOR key not confirmed — writing raw buffer");
+            plaintext.assign(buf, buf + size);
+        }
+    } else {
+        plaintext.assign(buf, buf + size);
+    }
+
+    uint32_t out_magic = 0;
+    if (plaintext.size() >= 4) memcpy(&out_magic, plaintext.data(), 4);
+    if (out_magic != entropy::kIl2CppMetadataMagic) {
+        LOGW("[MetaHook] Output magic 0x%08X — may still be encrypted or non-standard format", out_magic);
+    }
+
+    std::lock_guard<std::mutex> lk(s_mutex);
+    struct stat st{};
+    if (stat(s_dump_dir.c_str(), &st) != 0) mkdir(s_dump_dir.c_str(), 0777);
+
+    std::string out_path = s_dump_dir + "/global-metadata.dat";
+    int fd = open(out_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { LOGE("[MetaHook] open(%s) failed errno=%d", out_path.c_str(), errno); return; }
+
+    const uint8_t* ptr = plaintext.data();
+    size_t left = plaintext.size();
+    while (left > 0) {
+        ssize_t w = write(fd, ptr, left);
+        if (w <= 0) break;
+        ptr  += w;
+        left -= static_cast<size_t>(w);
+    }
+    close(fd);
+    LOGI("[MetaHook] metadata written (%zu bytes) from %s -> %s",
+         plaintext.size(), src_path ? src_path : "?", out_path.c_str());
+}
+
+static void* hooked_MetadataLoad(const char* path, size_t* out_size) {
+    void* result = s_orig_load(path, out_size);
+    bool expected = false;
+    if (result && out_size && s_fired.compare_exchange_strong(expected, true)) {
+        LOGI("[MetaHook] fired path=%s size=%zu", path ? path : "?", *out_size);
+        std::thread([data  = result,
+                     size  = *out_size,
+                     spath = std::string(path ? path : "")]() {
+            persistDecryptedMetadata(data, size, spath.c_str());
+        }).detach();
+    }
+    return result;
+}
+
+static bool install(uintptr_t lib_base, const std::string& dump_dir) {
+    s_dump_dir = dump_dir;
+    auto syms  = scanner::scanAllSymbols(lib_base);
+    uintptr_t loader_addr = 0;
+#if defined(__aarch64__)
+    loader_addr = syms.metadata_cache_initialize ? syms.metadata_cache_initialize : syms.metadata_loader;
+#elif defined(__arm__)
+    loader_addr = syms.arm32_metadata_cache_init ? syms.arm32_metadata_cache_init : syms.arm32_metadata_loader;
+#endif
+    if (!loader_addr) { LOGW("[MetaHook] loader address not found"); return false; }
+    bool ok = hook_engine::installInlineHook(
+        reinterpret_cast<void*>(loader_addr),
+        reinterpret_cast<void*>(&hooked_MetadataLoad),
+        reinterpret_cast<void**>(&s_orig_load)
+    );
+    if (ok) LOGI("[MetaHook] inline hook installed at 0x%" PRIxPTR, loader_addr);
+    else    LOGE("[MetaHook] inline hook install failed");
+    return ok;
+}
+
+}
+
+static void* (*s_orig_dlopen)(const char*, int) = nullptr;
+
+static void* hooked_dlopen(const char* path, int flags) {
+    void* handle = s_orig_dlopen(path, flags);
+    if (handle && path && strstr(path, "libil2cpp.so")) {
+        bool expected = false;
+        if (s_early_hook_fired.compare_exchange_strong(expected, true)) {
+            LOGI("EARLY HOOK: libil2cpp.so loaded path=%s", path);
+            std::string out = s_early_out_dir;
+            config::DumperConfig cfg = s_early_cfg;
+            std::thread([out = std::move(out), cfg = std::move(cfg), handle]() mutable {
+                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                uintptr_t base = 0;
+                Dl_info di{};
+                if (dladdr(handle, &di) && di.dli_fbase)
+                    base = reinterpret_cast<uintptr_t>(di.dli_fbase);
+                if (!base) base = scanner::findLibBase("libil2cpp.so");
+                if (base) {
+                    if (cfg.enable_early_metadata_hook)
+                        metadata_hook::install(base, out);
+                    runApiInit(base);
+                }
+                runDump(out.c_str(), cfg);
+            }).detach();
+        }
+    }
+    return handle;
+}
+
+static bool installDlopenHook(const std::string& out_dir, const config::DumperConfig& cfg) {
+    s_early_out_dir = out_dir;
+    s_early_cfg     = cfg;
+    s_early_hook_fired.store(false);
+    if (hook_engine::installInlineHook(
+            reinterpret_cast<void*>(dlopen),
+            reinterpret_cast<void*>(hooked_dlopen),
+            reinterpret_cast<void**>(&s_orig_dlopen)))
+    {
+        LOGI("dlopen hook installed via inline hook");
+        return true;
+    }
+    if (hook_engine::patchGotSlot(
+            reinterpret_cast<void*>(dlopen),
+            reinterpret_cast<void*>(hooked_dlopen),
+            reinterpret_cast<void**>(&s_orig_dlopen)))
+    {
+        LOGI("dlopen hook installed via GOT patch");
+        return true;
+    }
+    s_orig_dlopen = dlopen;
+    LOGW("dlopen hook failed — using poll fallback");
+    return false;
 }
 
 namespace il2cpp_api {
@@ -48,8 +354,11 @@ struct FunctionTable {
     bool                   (*class_is_enum)(const Il2CppClass*)                                = nullptr;
     bool                   (*class_is_abstract)(const Il2CppClass*)                            = nullptr;
     bool                   (*class_is_interface)(const Il2CppClass*)                           = nullptr;
+    bool                   (*class_is_generic)(const Il2CppClass*)                             = nullptr;
+    bool                   (*class_is_inflated)(const Il2CppClass*)                            = nullptr;
     Il2CppClass*           (*class_get_parent)(Il2CppClass*)                                   = nullptr;
     Il2CppClass*           (*class_get_interfaces)(Il2CppClass*, void**)                       = nullptr;
+    Il2CppClass*           (*class_get_nested_types)(Il2CppClass*, void**)                     = nullptr;
     FieldInfo*             (*class_get_fields)(Il2CppClass*, void**)                           = nullptr;
     const PropertyInfo*    (*class_get_properties)(Il2CppClass*, void**)                       = nullptr;
     const MethodInfo*      (*class_get_methods)(Il2CppClass*, void**)                          = nullptr;
@@ -83,8 +392,10 @@ static uint64_t      g_il2cpp_base = 0;
 
 template<typename T>
 static void resolveSymbol(void* handle, const char* name, T& out) {
-    out = reinterpret_cast<T>(xdl_sym(handle, name, nullptr));
-    if (!out) LOGW("symbol not resolved: %s", name);
+    if (!handle || !name) return;
+    void* sym = dlsym(handle, name);
+    if (sym) out = reinterpret_cast<T>(sym);
+    else     LOGW("symbol not resolved: %s", name);
 }
 
 template<typename T>
@@ -95,66 +406,98 @@ static void applyFallback(uintptr_t addr, T& out) {
     }
 }
 
-static void populateFunctionTable(void* handle) {
-    resolveSymbol(handle, "il2cpp_init",                       g_api.init);
-    resolveSymbol(handle, "il2cpp_domain_get",                 g_api.domain_get);
-    resolveSymbol(handle, "il2cpp_domain_get_assemblies",      g_api.domain_get_assemblies);
-    resolveSymbol(handle, "il2cpp_assembly_get_image",         g_api.assembly_get_image);
-    resolveSymbol(handle, "il2cpp_image_get_name",             g_api.image_get_name);
-    resolveSymbol(handle, "il2cpp_image_get_class_count",      g_api.image_get_class_count);
-    resolveSymbol(handle, "il2cpp_image_get_class",            g_api.image_get_class);
-    resolveSymbol(handle, "il2cpp_class_get_type",             g_api.class_get_type);
-    resolveSymbol(handle, "il2cpp_class_from_type",            g_api.class_from_type);
-    resolveSymbol(handle, "il2cpp_class_get_name",             g_api.class_get_name);
-    resolveSymbol(handle, "il2cpp_class_get_namespace",        g_api.class_get_namespace);
-    resolveSymbol(handle, "il2cpp_class_get_flags",            g_api.class_get_flags);
-    resolveSymbol(handle, "il2cpp_class_is_valuetype",         g_api.class_is_valuetype);
-    resolveSymbol(handle, "il2cpp_class_is_enum",              g_api.class_is_enum);
-    resolveSymbol(handle, "il2cpp_class_is_abstract",          g_api.class_is_abstract);
-    resolveSymbol(handle, "il2cpp_class_is_interface",         g_api.class_is_interface);
-    resolveSymbol(handle, "il2cpp_class_get_parent",           g_api.class_get_parent);
-    resolveSymbol(handle, "il2cpp_class_get_interfaces",       g_api.class_get_interfaces);
-    resolveSymbol(handle, "il2cpp_class_get_fields",           g_api.class_get_fields);
-    resolveSymbol(handle, "il2cpp_class_get_properties",       g_api.class_get_properties);
-    resolveSymbol(handle, "il2cpp_class_get_methods",          g_api.class_get_methods);
-    resolveSymbol(handle, "il2cpp_class_get_method_from_name", g_api.class_get_method_from_name);
-    resolveSymbol(handle, "il2cpp_class_from_name",            g_api.class_from_name);
-    resolveSymbol(handle, "il2cpp_class_from_system_type",     g_api.class_from_system_type);
-    resolveSymbol(handle, "il2cpp_get_corlib",                 g_api.get_corlib);
-    resolveSymbol(handle, "il2cpp_field_get_flags",            g_api.field_get_flags);
-    resolveSymbol(handle, "il2cpp_field_get_name",             g_api.field_get_name);
-    resolveSymbol(handle, "il2cpp_field_get_offset",           g_api.field_get_offset);
-    resolveSymbol(handle, "il2cpp_field_get_type",             g_api.field_get_type);
-    resolveSymbol(handle, "il2cpp_field_static_get_value",     g_api.field_static_get_value);
-    resolveSymbol(handle, "il2cpp_property_get_flags",         g_api.property_get_flags);
-    resolveSymbol(handle, "il2cpp_property_get_get_method",    g_api.property_get_get_method);
-    resolveSymbol(handle, "il2cpp_property_get_set_method",    g_api.property_get_set_method);
-    resolveSymbol(handle, "il2cpp_property_get_name",          g_api.property_get_name);
-    resolveSymbol(handle, "il2cpp_method_get_return_type",     g_api.method_get_return_type);
-    resolveSymbol(handle, "il2cpp_method_get_name",            g_api.method_get_name);
-    resolveSymbol(handle, "il2cpp_method_get_param_count",     g_api.method_get_param_count);
-    resolveSymbol(handle, "il2cpp_method_get_param",           g_api.method_get_param);
-    resolveSymbol(handle, "il2cpp_method_get_flags",           g_api.method_get_flags);
-    resolveSymbol(handle, "il2cpp_method_get_param_name",      g_api.method_get_param_name);
-    resolveSymbol(handle, "il2cpp_type_is_byref",              g_api.type_is_byref);
-    resolveSymbol(handle, "il2cpp_thread_attach",              g_api.thread_attach);
-    resolveSymbol(handle, "il2cpp_is_vm_thread",               g_api.is_vm_thread);
-    resolveSymbol(handle, "il2cpp_string_new",                 g_api.string_new);
+static void populateFunctionTable(uintptr_t base) {
+    void* handle = dlopen("libil2cpp.so", RTLD_NOLOAD | RTLD_NOW);
+    if (!handle) LOGW("dlopen RTLD_NOLOAD failed — pattern scan only");
 
-    if (!g_api.domain_get || !g_api.domain_get_assemblies ||
-        !g_api.image_get_class || !g_api.thread_attach || !g_api.is_vm_thread)
-    {
-        LOGW("critical symbols missing, attempting pattern scan fallback");
-        auto s = scanner::scanAllSymbols(g_il2cpp_base);
-        applyFallback(s.domain_get,            g_api.domain_get);
-        applyFallback(s.domain_get_assemblies, g_api.domain_get_assemblies);
-        applyFallback(s.image_get_class,       g_api.image_get_class);
-        applyFallback(s.thread_attach,         g_api.thread_attach);
-        applyFallback(s.is_vm_thread,          g_api.is_vm_thread);
+    if (handle) {
+        auto r = [&](const char* name, auto& out) { resolveSymbol(handle, name, out); };
+        r("il2cpp_init",                       g_api.init);
+        r("il2cpp_domain_get",                 g_api.domain_get);
+        r("il2cpp_domain_get_assemblies",      g_api.domain_get_assemblies);
+        r("il2cpp_assembly_get_image",         g_api.assembly_get_image);
+        r("il2cpp_image_get_name",             g_api.image_get_name);
+        r("il2cpp_image_get_class_count",      g_api.image_get_class_count);
+        r("il2cpp_image_get_class",            g_api.image_get_class);
+        r("il2cpp_class_get_type",             g_api.class_get_type);
+        r("il2cpp_class_from_type",            g_api.class_from_type);
+        r("il2cpp_class_get_name",             g_api.class_get_name);
+        r("il2cpp_class_get_namespace",        g_api.class_get_namespace);
+        r("il2cpp_class_get_flags",            g_api.class_get_flags);
+        r("il2cpp_class_is_valuetype",         g_api.class_is_valuetype);
+        r("il2cpp_class_is_enum",              g_api.class_is_enum);
+        r("il2cpp_class_is_abstract",          g_api.class_is_abstract);
+        r("il2cpp_class_is_interface",         g_api.class_is_interface);
+        r("il2cpp_class_is_generic",           g_api.class_is_generic);
+        r("il2cpp_class_is_inflated",          g_api.class_is_inflated);
+        r("il2cpp_class_get_parent",           g_api.class_get_parent);
+        r("il2cpp_class_get_interfaces",       g_api.class_get_interfaces);
+        r("il2cpp_class_get_nested_types",     g_api.class_get_nested_types);
+        r("il2cpp_class_get_fields",           g_api.class_get_fields);
+        r("il2cpp_class_get_properties",       g_api.class_get_properties);
+        r("il2cpp_class_get_methods",          g_api.class_get_methods);
+        r("il2cpp_class_get_method_from_name", g_api.class_get_method_from_name);
+        r("il2cpp_class_from_name",            g_api.class_from_name);
+        r("il2cpp_class_from_system_type",     g_api.class_from_system_type);
+        r("il2cpp_get_corlib",                 g_api.get_corlib);
+        r("il2cpp_field_get_flags",            g_api.field_get_flags);
+        r("il2cpp_field_get_name",             g_api.field_get_name);
+        r("il2cpp_field_get_offset",           g_api.field_get_offset);
+        r("il2cpp_field_get_type",             g_api.field_get_type);
+        r("il2cpp_field_static_get_value",     g_api.field_static_get_value);
+        r("il2cpp_property_get_flags",         g_api.property_get_flags);
+        r("il2cpp_property_get_get_method",    g_api.property_get_get_method);
+        r("il2cpp_property_get_set_method",    g_api.property_get_set_method);
+        r("il2cpp_property_get_name",          g_api.property_get_name);
+        r("il2cpp_method_get_return_type",     g_api.method_get_return_type);
+        r("il2cpp_method_get_name",            g_api.method_get_name);
+        r("il2cpp_method_get_param_count",     g_api.method_get_param_count);
+        r("il2cpp_method_get_param",           g_api.method_get_param);
+        r("il2cpp_method_get_flags",           g_api.method_get_flags);
+        r("il2cpp_method_get_param_name",      g_api.method_get_param_name);
+        r("il2cpp_type_is_byref",              g_api.type_is_byref);
+        r("il2cpp_thread_attach",              g_api.thread_attach);
+        r("il2cpp_is_vm_thread",               g_api.is_vm_thread);
+        r("il2cpp_string_new",                 g_api.string_new);
+
+        if (!g_api.domain_get) {
+            void* s = dlsym(handle, "_ZN6il2cpp2vm6Domain3GetEv");
+            if (s) g_api.domain_get = reinterpret_cast<decltype(g_api.domain_get)>(s);
+        }
+        if (!g_api.domain_get_assemblies) {
+            void* s = dlsym(handle, "_ZN6il2cpp2vm6Domain12GetAssembliesEPKNS0_8Il2CppDomainEPm");
+            if (s) g_api.domain_get_assemblies = reinterpret_cast<decltype(g_api.domain_get_assemblies)>(s);
+        }
+    }
+
+    const bool critical_missing =
+        !g_api.domain_get || !g_api.domain_get_assemblies ||
+        !g_api.image_get_class || !g_api.thread_attach || !g_api.is_vm_thread;
+
+    if (critical_missing) {
+        LOGW("critical symbols missing — full pattern scan");
+        auto s = scanner::scanAllSymbols(base);
+        applyFallback(s.domain_get,                 g_api.domain_get);
+        applyFallback(s.domain_get_assemblies,      g_api.domain_get_assemblies);
+        applyFallback(s.image_get_class,            g_api.image_get_class);
+        applyFallback(s.thread_attach,              g_api.thread_attach);
+        applyFallback(s.is_vm_thread,               g_api.is_vm_thread);
+        applyFallback(s.domain_get_2026,            g_api.domain_get);
+        applyFallback(s.domain_get_assemblies_2024, g_api.domain_get_assemblies);
+        applyFallback(s.image_get_class_2026,       g_api.image_get_class);
+#if defined(__arm__)
+        applyFallback(s.arm32_domain_get,            g_api.domain_get);
+        applyFallback(s.arm32_domain_get_assemblies, g_api.domain_get_assemblies);
+        applyFallback(s.arm32_image_get_class,       g_api.image_get_class);
+        applyFallback(s.arm32_thread_attach,         g_api.thread_attach);
+#endif
+        if (!g_api.domain_get)            LOGE("FATAL: domain_get unresolved");
+        if (!g_api.domain_get_assemblies) LOGE("FATAL: domain_get_assemblies unresolved");
+        if (!g_api.image_get_class)       LOGW("image_get_class unresolved — reflection fallback");
     }
 }
 
-} // namespace il2cpp_api
+}
 
 static std::string buildMethodModifier(uint32_t flags) {
     std::stringstream out;
@@ -170,11 +513,9 @@ static std::string buildMethodModifier(uint32_t flags) {
     if (flags & METHOD_ATTRIBUTE_STATIC)   out << "static ";
     if (flags & METHOD_ATTRIBUTE_ABSTRACT) {
         out << "abstract ";
-        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT)
-            out << "override ";
+        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT) out << "override ";
     } else if (flags & METHOD_ATTRIBUTE_FINAL) {
-        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT)
-            out << "sealed override ";
+        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT) out << "sealed override ";
     } else if (flags & METHOD_ATTRIBUTE_VIRTUAL) {
         out << ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_NEW_SLOT
                 ? "virtual " : "override ");
@@ -183,26 +524,18 @@ static std::string buildMethodModifier(uint32_t flags) {
     return out.str();
 }
 
-static bool resolveByref(const Il2CppType* type) {
-    auto& api = il2cpp_api::g_api;
-    return api.type_is_byref ? api.type_is_byref(type) : static_cast<bool>(type->byref);
-}
-
-struct MethodEntry {
-    std::string name;
-    std::string return_type;
-    std::string modifier;
-    uint64_t    rva = 0;
-    uint64_t    va  = 0;
-    std::vector<std::pair<std::string, std::string>> params;
-};
-
 static std::string safeClassName(Il2CppClass* klass) {
     if (!klass) return "object";
     auto& api = il2cpp_api::g_api;
     auto name = api.class_get_name ? api.class_get_name(klass) : nullptr;
     return safeStr(name, "object");
 }
+
+struct MethodEntry {
+    std::string name, return_type, modifier;
+    uint64_t rva = 0, va = 0;
+    std::vector<std::pair<std::string,std::string>> params;
+};
 
 static std::vector<MethodEntry> collectMethods(Il2CppClass* klass) {
     if (!klass) return {};
@@ -216,22 +549,17 @@ static std::vector<MethodEntry> collectMethods(Il2CppClass* klass) {
         e.va  = method->methodPointer ? reinterpret_cast<uint64_t>(method->methodPointer) : 0;
         e.rva = (e.va && il2cpp_api::g_il2cpp_base) ? (e.va - il2cpp_api::g_il2cpp_base) : 0;
         uint32_t iflags = 0;
-        if (api.method_get_flags)
-            e.modifier = buildMethodModifier(api.method_get_flags(method, &iflags));
-        if (api.method_get_name)
-            e.name = safeStr(api.method_get_name(method));
+        if (api.method_get_flags) e.modifier    = buildMethodModifier(api.method_get_flags(method, &iflags));
+        if (api.method_get_name)  e.name         = safeStr(api.method_get_name(method));
         if (e.name.empty()) continue;
-
         if (api.method_get_return_type && api.class_from_type) {
             auto ret = api.method_get_return_type(method);
             if (ret) e.return_type = safeClassName(api.class_from_type(ret));
         }
         if (e.return_type.empty()) e.return_type = "void";
-
-        auto pc = (api.method_get_param_count) ? api.method_get_param_count(method) : 0u;
+        auto pc = api.method_get_param_count ? api.method_get_param_count(method) : 0u;
         for (uint32_t i = 0; i < pc; ++i) {
-            std::string tname = "object";
-            std::string pname = "p" + std::to_string(i);
+            std::string tname = "object", pname = "p" + std::to_string(i);
             if (api.method_get_param && api.class_from_type) {
                 auto param = api.method_get_param(method, i);
                 if (param) tname = safeClassName(api.class_from_type(param));
@@ -251,12 +579,10 @@ static std::string dumpMethods(Il2CppClass* klass) {
     std::stringstream out;
     out << "\n\t// Methods\n";
     for (const auto& e : collectMethods(klass)) {
-        if (e.va) {
-            out << "\t// RVA: 0x" << std::hex << e.rva << " VA: 0x" << std::hex << e.va;
-        } else {
-            out << "\t// RVA: 0x0 VA: 0x0";
-        }
-        out << "\n\t" << e.modifier << e.return_type << " " << e.name << "(";
+        out << (e.va ? ("\t// RVA: 0x" + [&]{ std::ostringstream s; s << std::hex << e.rva; return s.str(); }()
+                        + " VA: 0x" + [&]{ std::ostringstream s; s << std::hex << e.va; return s.str(); }())
+                     : std::string("\t// RVA: 0x0 VA: 0x0")) << "\n";
+        out << "\t" << e.modifier << e.return_type << " " << e.name << "(";
         for (size_t i = 0; i < e.params.size(); ++i) {
             if (i > 0) out << ", ";
             out << e.params[i].first << " " << e.params[i].second;
@@ -273,9 +599,9 @@ static std::string dumpProperties(Il2CppClass* klass) {
     std::stringstream out;
     out << "\n\t// Properties\n";
     void* iter = nullptr;
-    while (auto pc = api.class_get_properties(klass, &iter)) {
-        auto prop  = const_cast<PropertyInfo*>(pc);
-        if (!prop) continue;
+    while (const PropertyInfo* pc = api.class_get_properties(klass, &iter)) {
+        if (!pc) continue;
+        PropertyInfo* prop = const_cast<PropertyInfo*>(pc);
         auto get_m = api.property_get_get_method ? api.property_get_get_method(prop) : nullptr;
         auto set_m = api.property_get_set_method ? api.property_get_set_method(prop) : nullptr;
         auto pname = api.property_get_name       ? api.property_get_name(prop)       : nullptr;
@@ -292,14 +618,11 @@ static std::string dumpProperties(Il2CppClass* klass) {
             auto pt = api.method_get_param(set_m, 0);
             if (pt) prop_class = api.class_from_type(pt);
         }
-        if (prop_class) {
-            out << safeClassName(prop_class) << " " << pname << " { ";
-            if (get_m) out << "get; ";
-            if (set_m) out << "set; ";
-            out << "}\n";
-        } else {
-            out << " // unknown property " << pname << "\n";
-        }
+        out << (prop_class ? safeClassName(prop_class) : std::string("object"))
+            << " " << pname << " { ";
+        if (get_m) out << "get; ";
+        if (set_m) out << "set; ";
+        out << "}\n";
     }
     return out.str();
 }
@@ -325,14 +648,12 @@ static std::string dumpFields(Il2CppClass* klass) {
             case FIELD_ATTRIBUTE_FAM_OR_ASSEM:  out << "protected internal "; break;
             default: break;
         }
-        if (attrs & FIELD_ATTRIBUTE_LITERAL) {
-            out << "const ";
-        } else {
+        if (attrs & FIELD_ATTRIBUTE_LITERAL) { out << "const "; }
+        else {
             if (attrs & FIELD_ATTRIBUTE_STATIC)    out << "static ";
             if (attrs & FIELD_ATTRIBUTE_INIT_ONLY) out << "readonly ";
         }
-        std::string fname = "unknown_field";
-        std::string ftype = "object";
+        std::string fname = "unknown_field", ftype = "object";
         if (api.field_get_name) { auto n = api.field_get_name(field); if (n && *n) fname = n; }
         if (api.field_get_type && api.class_from_type) {
             auto ft = api.field_get_type(field);
@@ -340,8 +661,7 @@ static std::string dumpFields(Il2CppClass* klass) {
         }
         out << ftype << " " << fname;
         if ((attrs & FIELD_ATTRIBUTE_LITERAL) && is_enum && api.field_static_get_value) {
-            uint64_t val = 0;
-            api.field_static_get_value(field, &val);
+            uint64_t val = 0; api.field_static_get_value(field, &val);
             out << " = " << std::dec << val;
         }
         size_t offset = api.field_get_offset ? api.field_get_offset(field) : 0;
@@ -350,25 +670,37 @@ static std::string dumpFields(Il2CppClass* klass) {
     return out.str();
 }
 
-static std::string dumpType(const Il2CppType* type) {
-    if (!type) return {};
+static std::string resolveGenericSuffix(Il2CppClass* klass) {
+    if (!klass) return {};
+    auto& api = il2cpp_api::g_api;
+    bool is_gen = (api.class_is_generic  && api.class_is_generic(klass))
+               || (api.class_is_inflated && api.class_is_inflated(klass));
+    return is_gen ? "<T>" : std::string{};
+}
+
+static std::string dumpTypeToString(const Il2CppType* type, bool include_nested, int depth = 0);
+
+static std::string dumpTypeToString(const Il2CppType* type, bool include_nested, int depth) {
+    if (!type || depth > 8) return {};
     auto& api = il2cpp_api::g_api;
     if (!api.class_from_type) return {};
     auto klass = api.class_from_type(type);
     if (!klass) return {};
 
-    auto  flags       = api.class_get_flags      ? api.class_get_flags(klass)      : 0;
-    auto  is_vt       = api.class_is_valuetype   ? api.class_is_valuetype(klass)   : false;
-    auto  is_enum     = api.class_is_enum        ? api.class_is_enum(klass)        : false;
-    auto  is_iface    = api.class_is_interface   ? api.class_is_interface(klass)   : false;
-    auto  is_abstract = api.class_is_abstract    ? api.class_is_abstract(klass)    : false;
-    auto  ns          = api.class_get_namespace  ? safeStr(api.class_get_namespace(klass)) : "";
-    auto  cn          = api.class_get_name       ? safeStr(api.class_get_name(klass), "UnknownClass") : "UnknownClass";
+    auto flags       = api.class_get_flags     ? api.class_get_flags(klass)      : 0;
+    auto is_vt       = api.class_is_valuetype  ? api.class_is_valuetype(klass)   : false;
+    auto is_enum     = api.class_is_enum       ? api.class_is_enum(klass)        : false;
+    auto is_iface    = api.class_is_interface  ? api.class_is_interface(klass)   : false;
+    auto is_abstract = api.class_is_abstract   ? api.class_is_abstract(klass)    : false;
+    auto ns          = api.class_get_namespace ? safeStr(api.class_get_namespace(klass)) : "";
+    auto cn          = api.class_get_name      ? safeStr(api.class_get_name(klass), "UnknownClass") : "UnknownClass";
+    auto gen_suffix  = resolveGenericSuffix(klass);
 
+    std::string indent(static_cast<size_t>(depth) * 4, ' ');
     std::stringstream out;
-    out << "\n// Namespace: " << ns << "\n";
-    if (flags & TYPE_ATTRIBUTE_SERIALIZABLE) out << "[Serializable]\n";
-
+    out << "\n" << indent << "// Namespace: " << ns << "\n";
+    if (flags & TYPE_ATTRIBUTE_SERIALIZABLE) out << indent << "[Serializable]\n";
+    out << indent;
     switch (flags & TYPE_ATTRIBUTE_VISIBILITY_MASK) {
         case TYPE_ATTRIBUTE_PUBLIC:
         case TYPE_ATTRIBUTE_NESTED_PUBLIC:        out << "public ";             break;
@@ -380,22 +712,14 @@ static std::string dumpType(const Il2CppType* type) {
         case TYPE_ATTRIBUTE_NESTED_FAM_OR_ASSEM:  out << "protected internal "; break;
         default: break;
     }
-
-    if ((flags & TYPE_ATTRIBUTE_ABSTRACT) && (flags & TYPE_ATTRIBUTE_SEALED)) {
-        out << "static ";
-    } else if (!is_iface && is_abstract) {
-        out << "abstract ";
-    } else if (flags & TYPE_ATTRIBUTE_SEALED) {
-        out << "sealed ";
-    }
-
+    if ((flags & TYPE_ATTRIBUTE_ABSTRACT) && (flags & TYPE_ATTRIBUTE_SEALED)) out << "static ";
+    else if (!is_iface && is_abstract) out << "abstract ";
+    else if (flags & TYPE_ATTRIBUTE_SEALED) out << "sealed ";
     if (is_enum)       out << "enum ";
     else if (is_iface) out << "interface ";
     else if (is_vt)    out << "struct ";
     else               out << "class ";
-
-    out << cn;
-
+    out << cn << gen_suffix;
     if (api.class_get_parent) {
         auto parent = api.class_get_parent(klass);
         if (parent) {
@@ -404,12 +728,21 @@ static std::string dumpType(const Il2CppType* type) {
                 out << " : " << pname;
         }
     }
-
-    out << "\n{\n";
+    out << "\n" << indent << "{\n";
     out << dumpFields(klass);
     out << dumpProperties(klass);
     out << dumpMethods(klass);
-    out << "}\n";
+    if (include_nested && api.class_get_nested_types) {
+        void* niter = nullptr;
+        while (auto nested = api.class_get_nested_types(klass, &niter)) {
+            if (!nested) continue;
+            auto ntype = api.class_get_type ? api.class_get_type(nested) : nullptr;
+            if (!ntype) continue;
+            auto ns_str = dumpTypeToString(ntype, include_nested, depth + 1);
+            if (!ns_str.empty()) out << ns_str;
+        }
+    }
+    out << indent << "}\n";
     return out.str();
 }
 
@@ -418,31 +751,26 @@ namespace output {
 static bool ensureDirectory(const char* dir) {
     struct stat st{};
     if (stat(dir, &st) == 0) return S_ISDIR(st.st_mode);
-    if (mkdir(dir, 0777) == 0) {
-        chmod(dir, 0777);
-        LOGI("created output dir: %s", dir);
-        return true;
-    }
-    LOGE("mkdir failed: %s (errno=%d)", dir, errno);
+    if (mkdir(dir, 0777) == 0) { chmod(dir, 0777); return true; }
+    LOGE("mkdir failed: %s errno=%d", dir, errno);
     return false;
 }
 
-static void writeCppHeader(
-    const char* dir,
-    const std::vector<std::pair<Il2CppClass*, std::string>>& classes
-) {
+static void writeCppHeader(const char* dir,
+    const std::vector<std::pair<Il2CppClass*, std::string>>& classes)
+{
     auto path = std::string(dir) + "/dump.h";
     std::ofstream f(path);
     if (!f.is_open()) { LOGE("failed to open %s", path.c_str()); return; }
     auto& api = il2cpp_api::g_api;
-    f << "// Generated by Eaquel Dumper\n#pragma once\n#include <cstdint>\n\n";
+    f << "#pragma once\n#include <cstdint>\n\n";
     for (const auto& [klass, dll] : classes) {
         if (!klass) continue;
         auto cn = api.class_get_name ? api.class_get_name(klass) : nullptr;
         if (!cn || !*cn) continue;
         auto ns = api.class_get_namespace ? api.class_get_namespace(klass) : nullptr;
-        f << "// " << dll << " | " << safeStr(ns) << "::" << cn << "\n";
-        f << "struct " << cn << " {\n";
+        f << "// " << dll << " | " << safeStr(ns) << "::" << cn << "\n"
+          << "struct " << cn << " {\n";
         void* iter = nullptr;
         if (api.class_get_fields) {
             while (auto field = api.class_get_fields(klass, &iter)) {
@@ -460,8 +788,8 @@ static void writeCppHeader(
         }
         for (const auto& m : collectMethods(klass)) {
             if (m.rva == 0) continue;
-            f << "    // " << m.modifier << m.return_type << " " << m.name << "() RVA=0x"
-              << std::hex << m.rva << "\n";
+            f << "    // " << m.modifier << m.return_type << " " << m.name
+              << "() RVA=0x" << std::hex << m.rva << "\n";
         }
         f << "};\n\n";
     }
@@ -469,14 +797,13 @@ static void writeCppHeader(
     LOGI("dump.h written to %s", path.c_str());
 }
 
-static void writeFridaScript(
-    const char* dir,
-    const std::vector<std::pair<Il2CppClass*, std::string>>& classes
-) {
+static void writeFridaScript(const char* dir,
+    const std::vector<std::pair<Il2CppClass*, std::string>>& classes)
+{
     auto path = std::string(dir) + "/dump.js";
     std::ofstream f(path);
     if (!f.is_open()) { LOGE("failed to open %s", path.c_str()); return; }
-    f << "\"use strict\";\n\nconst il2cppBase = Module.findBaseAddress(\"libil2cpp.so\");\n\n";
+    f << "\"use strict\";\nconst il2cppBase = Module.findBaseAddress(\"libil2cpp.so\");\n\n";
     auto& api = il2cpp_api::g_api;
     for (const auto& [klass, dll] : classes) {
         if (!klass) continue;
@@ -484,45 +811,37 @@ static void writeFridaScript(
         if (!cn || !*cn) continue;
         for (const auto& m : collectMethods(klass)) {
             if (m.rva == 0 || m.name.empty()) continue;
-            f << "// " << cn << "::" << m.name << "\n";
-            f << "Interceptor.attach(il2cppBase.add(0x" << std::hex << m.rva << "), {\n";
-            f << "    onEnter: function(args) {\n";
+            f << "// " << cn << "::" << m.name << "\n"
+              << "Interceptor.attach(il2cppBase.add(0x" << std::hex << m.rva << "), {\n"
+              << "    onEnter: function(args) {\n";
             for (size_t i = 0; i < m.params.size(); ++i)
-                f << "        // args[" << i << "] -> "
-                  << m.params[i].first << " " << m.params[i].second << "\n";
-            f << "    },\n    onLeave: function(retval) {\n";
-            f << "        // retval -> " << m.return_type << "\n";
-            f << "    }\n});\n\n";
+                f << "        // args[" << i << "] -> " << m.params[i].first << " " << m.params[i].second << "\n";
+            f << "    },\n    onLeave: function(retval) {\n"
+              << "        // retval -> " << m.return_type << "\n"
+              << "    }\n});\n\n";
         }
     }
     f.close();
     LOGI("dump.js written to %s", path.c_str());
 }
 
-} // namespace output
+}
 
-static void runApiInit(void* handle) {
-    Dl_info di{};
-    if (dladdr(handle, &di))
-        il2cpp_api::g_il2cpp_base = reinterpret_cast<uint64_t>(di.dli_fbase);
-    LOGI("il2cpp handle: %p  base: 0x%" PRIx64, handle, il2cpp_api::g_il2cpp_base);
-    il2cpp_api::populateFunctionTable(handle);
-
+static void runApiInit(uintptr_t base) {
+    il2cpp_api::g_il2cpp_base = static_cast<uint64_t>(base);
+    LOGI("il2cpp base: 0x%" PRIx64, il2cpp_api::g_il2cpp_base);
+    il2cpp_api::populateFunctionTable(base);
     auto& api = il2cpp_api::g_api;
-    if (!api.domain_get_assemblies) { LOGE("il2cpp api init failed — aborting"); return; }
-
+    if (!api.domain_get_assemblies) { LOGE("il2cpp api init failed"); return; }
     constexpr int kMaxWaitSec = 30;
     for (int i = 0; i < kMaxWaitSec; ++i) {
         if (!api.is_vm_thread) {
-            LOGW("is_vm_thread unavailable, proceeding after delay");
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-            break;
+            std::this_thread::sleep_for(std::chrono::seconds(2)); break;
         }
         if (api.is_vm_thread(nullptr)) break;
         LOGI("waiting for il2cpp VM... (%d/%d)", i + 1, kMaxWaitSec);
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
-
     if (api.thread_attach && api.domain_get) {
         auto domain = api.domain_get();
         if (domain) api.thread_attach(domain);
@@ -531,42 +850,33 @@ static void runApiInit(void* handle) {
 
 static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
     auto& api = il2cpp_api::g_api;
-    if (!api.domain_get || !api.domain_get_assemblies) {
-        LOGE("runDump: api not initialised, aborting");
-        return;
-    }
-
+    if (!api.domain_get || !api.domain_get_assemblies) { LOGE("runDump: api not initialised"); return; }
     LOGI("dump started -> %s", out_dir);
 
     std::string effective_dir = out_dir;
-
     auto tryDir = [&](const std::string& d) -> bool {
-        if (output::ensureDirectory(d.c_str())) { effective_dir = d; return true; }
-        return false;
+        if (output::ensureDirectory(d.c_str())) { effective_dir = d; return true; } return false;
     };
-
     if (!tryDir(out_dir)) {
-        LOGW("primary output dir unavailable: %s", out_dir);
-        if (!tryDir("/data/local/tmp/eaquel_out")) {
-            if (!tryDir("/data/local/tmp")) {
-                LOGE("runDump: no writable output dir found, aborting");
-                return;
+        if (!tryDir("/sdcard/EaquelDumps")) {
+            if (!tryDir("/data/local/tmp/EaquelDumps")) {
+                if (!tryDir("/data/local/tmp")) { LOGE("runDump: no writable dir"); return; }
             }
         }
     }
-    LOGI("runDump: using output dir: %s", effective_dir.c_str());
+    LOGI("runDump: using %s", effective_dir.c_str());
     const char* dir = effective_dir.c_str();
 
     size_t ac   = 0;
     auto domain = api.domain_get();
-    if (!domain) { LOGE("domain_get returned null"); return; }
+    if (!domain) { LOGE("domain_get null"); return; }
     auto assemblies = api.domain_get_assemblies(domain, &ac);
-    if (!assemblies || ac == 0) { LOGE("no assemblies found"); return; }
+    if (!assemblies || ac == 0) { LOGE("no assemblies"); return; }
 
     std::stringstream img_header;
     for (size_t i = 0; i < ac; ++i) {
         if (!assemblies[i]) continue;
-        auto img = api.assembly_get_image ? api.assembly_get_image(assemblies[i]) : nullptr;
+        auto img   = api.assembly_get_image ? api.assembly_get_image(assemblies[i]) : nullptr;
         if (!img) continue;
         auto iname = api.image_get_name ? api.image_get_name(img) : nullptr;
         img_header << "// Image " << i << ": " << safeStr(iname) << "\n";
@@ -576,10 +886,9 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
     std::vector<std::pair<Il2CppClass*, std::string>> class_registry;
 
     if (api.image_get_class) {
-        LOGI("il2cpp >= 2018.3 path");
         for (size_t i = 0; i < ac; ++i) {
             if (!assemblies[i]) continue;
-            auto img = api.assembly_get_image ? api.assembly_get_image(assemblies[i]) : nullptr;
+            auto img  = api.assembly_get_image ? api.assembly_get_image(assemblies[i]) : nullptr;
             if (!img) continue;
             auto iname = api.image_get_name ? api.image_get_name(img) : nullptr;
             auto dll   = std::string(safeStr(iname));
@@ -589,9 +898,10 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
                 auto klass_c = api.image_get_class(img, j);
                 if (!klass_c) continue;
                 auto klass = const_cast<Il2CppClass*>(klass_c);
+                if (!cfg.include_generic && api.class_is_generic && api.class_is_generic(klass)) continue;
                 auto type  = api.class_get_type ? api.class_get_type(klass) : nullptr;
                 if (!type) continue;
-                auto dumped = dumpType(type);
+                auto dumped = dumpTypeToString(type, cfg.dump_nested_classes);
                 if (!dumped.empty()) {
                     type_outputs.push_back(hdr + dumped);
                     class_registry.emplace_back(klass, dll);
@@ -599,16 +909,13 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
             }
         }
     } else {
-        LOGI("il2cpp < 2018.3 reflection path");
         if (!api.get_corlib || !api.class_from_name || !api.class_get_method_from_name ||
             !api.string_new || !api.class_get_type)
-        {
-            LOGE("reflection path: required api missing"); return;
-        }
-        auto corlib = api.get_corlib();
-        if (!corlib) { LOGE("get_corlib returned null"); return; }
-        auto asm_class    = api.class_from_name(corlib, "System.Reflection", "Assembly");
-        if (!asm_class)   { LOGE("Assembly class not found"); return; }
+        { LOGE("reflection path: api missing"); return; }
+        auto corlib    = api.get_corlib();
+        if (!corlib)   { LOGE("get_corlib null"); return; }
+        auto asm_class = api.class_from_name(corlib, "System.Reflection", "Assembly");
+        if (!asm_class) { LOGE("Assembly class not found"); return; }
         auto asm_load     = api.class_get_method_from_name(asm_class, "Load",     1);
         auto asm_gettypes = api.class_get_method_from_name(asm_class, "GetTypes", 0);
         if (!asm_load     || !asm_load->methodPointer)     { LOGE("Assembly::Load not found");     return; }
@@ -625,18 +932,17 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
             auto dot   = dll.rfind('.');
             auto name  = api.string_new(dll.substr(0, dot).data());
             if (!name) continue;
-            auto ref_asm   = reinterpret_cast<Load_fn>(asm_load->methodPointer)(nullptr, name, nullptr);
+            auto ref_asm = reinterpret_cast<Load_fn>(asm_load->methodPointer)(nullptr, name, nullptr);
             if (!ref_asm) continue;
             auto ref_types = reinterpret_cast<GetTypes_fn>(asm_gettypes->methodPointer)(ref_asm, nullptr);
-            if (!ref_types) continue;
+            if (!ref_types || ref_types->max_length == 0) continue;
             for (size_t j = 0; j < ref_types->max_length; ++j) {
                 if (!ref_types->vector[j]) continue;
-                auto klass = api.class_from_system_type(
-                    static_cast<Il2CppReflectionType*>(ref_types->vector[j]));
+                auto klass = api.class_from_system_type(static_cast<Il2CppReflectionType*>(ref_types->vector[j]));
                 if (!klass) continue;
                 auto type = api.class_get_type(klass);
                 if (!type) continue;
-                auto dumped = dumpType(type);
+                auto dumped = dumpTypeToString(type, cfg.dump_nested_classes);
                 if (!dumped.empty()) {
                     type_outputs.push_back(hdr + dumped);
                     class_registry.emplace_back(klass, dll);
@@ -656,115 +962,13 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
             LOGI("dump.cs written: %zu types -> %s", type_outputs.size(), cs_path.c_str());
         }
     }
-    if (cfg.generate_cpp_header)   output::writeCppHeader  (dir, class_registry);
-    if (cfg.generate_frida_script) output::writeFridaScript (dir, class_registry);
-    LOGI("all outputs written to %s", dir);
-}
 
-namespace bridge {
-
-struct NativeBridgeCallbacks {
-    uint32_t version;
-    void*    initialize;
-    void*    (*loadLibrary)(const char*, int);
-    void*    (*getTrampoline)(void*, const char*, const char*, uint32_t);
-    void*    isSupported; void* getAppEnv; void* isCompatibleWith;
-    void*    getSignalHandler; void* unloadLibrary; void* getError;
-    void*    isPathSupported; void* initAnonymousNamespace;
-    void*    createNamespace; void* linkNamespaces;
-    void*    (*loadLibraryExt)(const char*, int, void*);
-};
-
-[[nodiscard]] static std::string resolveNativeLibDir(JavaVM* jvm) {
-    JNIEnv* env = nullptr;
-    jvm->AttachCurrentThread(&env, nullptr);
-    if (!env) return {};
-    auto atc = env->FindClass("android/app/ActivityThread");
-    if (!atc) { LOGE("ActivityThread not found"); return {}; }
-    auto cam = env->GetStaticMethodID(atc, "currentApplication", "()Landroid/app/Application;");
-    if (!cam) { LOGE("currentApplication not found"); return {}; }
-    auto app  = env->CallStaticObjectMethod(atc, cam);
-    if (!app) return {};
-    auto appc = env->GetObjectClass(app);
-    if (!appc) return {};
-    auto gaim = env->GetMethodID(appc, "getApplicationInfo", "()Landroid/content/pm/ApplicationInfo;");
-    if (!gaim) return {};
-    auto ai   = env->CallObjectMethod(app, gaim);
-    if (!ai)  return {};
-    auto nldf = env->GetFieldID(env->GetObjectClass(ai), "nativeLibraryDir", "Ljava/lang/String;");
-    if (!nldf) return {};
-    auto jstr = reinterpret_cast<jstring>(env->GetObjectField(ai, nldf));
-    if (!jstr) return {};
-    auto cstr = env->GetStringUTFChars(jstr, nullptr);
-    if (!cstr) return {};
-    LOGI("native lib dir: %s", cstr);
-    std::string result(cstr);
-    env->ReleaseStringUTFChars(jstr, cstr);
-    return result;
-}
-
-[[nodiscard]] static std::string readNativeBridgeProp() {
-    auto buf = std::array<char, PROP_VALUE_MAX>{};
-    __system_property_get("ro.dalvik.vm.native.bridge", buf.data());
-    return { buf.data() };
-}
-
-static bool loadViaX86(
-    const std::string& game_dir, const std::string& out_dir,
-    const config::DumperConfig& cfg, int api_level, void* data, size_t length
-) {
-    std::this_thread::sleep_for(std::chrono::seconds(5));
-    auto libart  = dlopen("libart.so", RTLD_NOW);
-    if (!libart) return false;
-    auto get_vms = reinterpret_cast<jint (*)(JavaVM**, jsize, jsize*)>(
-        dlsym(libart, "JNI_GetCreatedJavaVMs"));
-    LOGI("JNI_GetCreatedJavaVMs: %p", get_vms);
-    if (!get_vms) return false;
-    JavaVM* jvm_buf[1]; jsize num = 0;
-    if (get_vms(jvm_buf, 1, &num) != JNI_OK || num == 0) { LOGE("GetCreatedJavaVMs failed"); return false; }
-    auto jvm     = jvm_buf[0];
-    auto lib_dir = resolveNativeLibDir(jvm);
-    if (lib_dir.empty()) { LOGE("resolveNativeLibDir failed"); return false; }
-    if (lib_dir.find("/lib/x86") != std::string::npos) {
-        LOGI("x86 native, NativeBridge not needed"); munmap(data, length); return false;
+    if (!cfg.dump_only_cs) {
+        if (cfg.generate_cpp_header)   output::writeCppHeader  (dir, class_registry);
+        if (cfg.generate_frida_script) output::writeFridaScript (dir, class_registry);
     }
-    void* nb = dlopen("libhoudini.so", RTLD_NOW);
-    if (!nb) { auto prop = readNativeBridgeProp(); if (!prop.empty()) nb = dlopen(prop.data(), RTLD_NOW); }
-    if (!nb) return false;
-    auto cb = reinterpret_cast<NativeBridgeCallbacks*>(dlsym(nb, "NativeBridgeItf"));
-    if (!cb) return false;
-
-    // Android 16 uyumlu memfd_create — syscall yerine libc wrapper dene
-    int memfd = -1;
-#if defined(__ANDROID_API__) && __ANDROID_API__ >= 30
-    memfd = memfd_create("anon", MFD_CLOEXEC);
-#endif
-    if (memfd < 0)
-        memfd = static_cast<int>(syscall(__NR_memfd_create, "anon", MFD_CLOEXEC));
-    if (memfd < 0) { LOGE("memfd_create failed errno=%d", errno); return false; }
-
-    ftruncate(memfd, static_cast<off_t>(length));
-    auto mem = mmap(nullptr, length, PROT_WRITE, MAP_SHARED, memfd, 0);
-    if (mem == MAP_FAILED) { close(memfd); return false; }
-    memcpy(mem, data, length);
-    munmap(mem, length);
-    munmap(data, length);
-    char fd_path[PATH_MAX];
-    snprintf(fd_path, sizeof(fd_path), "/proc/self/fd/%d", memfd);
-    void* arm_handle = (api_level >= 26)
-        ? cb->loadLibraryExt(fd_path, RTLD_NOW, reinterpret_cast<void*>(3))
-        : cb->loadLibrary(fd_path, RTLD_NOW);
-    if (!arm_handle) { close(memfd); return false; }
-    auto jni_load = reinterpret_cast<void (*)(JavaVM*, void*)>(
-        cb->getTrampoline(arm_handle, "JNI_OnLoad", nullptr, 0));
-    if (!jni_load) { close(memfd); return false; }
-    auto combined = game_dir + "|" + out_dir;
-    jni_load(jvm, const_cast<char*>(combined.c_str()));
-    close(memfd);
-    return true;
+    LOGI("Dump complete: %zu classes -> %s", type_outputs.size(), dir);
 }
-
-} // namespace bridge
 
 namespace {
 
@@ -779,20 +983,29 @@ constexpr int64_t kMaxDelayMs  = 16000;
 }
 
 static void hackStart(
-    const std::string& /*game_dir*/,
+    const std::string& ,
     const std::string& out_dir,
     const config::DumperConfig& cfg
 ) {
     for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
-        void* handle = xdl_open("libil2cpp.so", XDL_DEFAULT);
-        if (handle) {
-            runApiInit(handle);
-            xdl_close(handle);
+        uintptr_t base = scanner::findLibBase("libil2cpp.so");
+        if (!base) {
+            void* h = dlopen("libil2cpp.so", RTLD_NOLOAD | RTLD_NOW);
+            if (h) {
+                Dl_info di{};
+                if (dladdr(h, &di) && di.dli_fbase)
+                    base = reinterpret_cast<uintptr_t>(di.dli_fbase);
+            }
+        }
+        if (base) {
+            if (cfg.enable_early_metadata_hook && !metadata_hook::s_fired.load())
+                metadata_hook::install(base, out_dir);
+            runApiInit(base);
             runDump(out_dir.c_str(), cfg);
             return;
         }
         auto delay = exponentialDelay(attempt);
-        LOGI("libil2cpp.so not ready, attempt=%d delay=%" PRId64 "ms", attempt, delay);
+        LOGI("libil2cpp.so not ready attempt=%d delay=%" PRId64 "ms", attempt, delay);
         std::this_thread::sleep_for(std::chrono::milliseconds(delay));
     }
     LOGE("libil2cpp.so not found after %d retries tid=%d", kMaxRetries, gettid());
@@ -801,39 +1014,33 @@ static void hackStart(
 static void hackPrepare(
     const std::string& game_dir,
     const std::string& out_dir,
-    const config::DumperConfig& cfg,
-    void* data, size_t length
+    const config::DumperConfig& cfg
 ) {
     LOGI("hack_prepare tid=%d", gettid());
-    int api_level = android_get_device_api_level();
-    LOGI("api_level=%d", api_level);
-#if defined(__i386__) || defined(__x86_64__)
-    if (bridge::loadViaX86(game_dir, out_dir, cfg, api_level, data, length)) return;
+    LOGI("api_level=%d", android_get_device_api_level());
+#if defined(__arm__)
+    LOGI("mode: ARMv7/Thumb-2 (32-bit)");
+#elif defined(__aarch64__)
+    LOGI("mode: AArch64 (64-bit)");
 #endif
     hackStart(game_dir, out_dir, cfg);
 }
 
-} // anonymous namespace
+}
 
 class EaquelDumperModule : public zygisk::ModuleBase {
 public:
     void onLoad(zygisk::Api* api, JNIEnv* env) override {
-        this->api = api;
-        this->env = env;
+        this->api = api; this->env = env;
     }
 
     void preAppSpecialize(zygisk::AppSpecializeArgs* args) override {
         if (!args) return;
-
-        // Denylist kontrolü — process denylist'teyse modülü kapat
         uint32_t flags = api->getFlags();
         if (flags & static_cast<uint32_t>(zygisk::StateFlag::PROCESS_ON_DENYLIST)) {
-            api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
-            return;
+            api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY); return;
         }
-
-        const char* pkg = nullptr;
-        const char* dir = nullptr;
+        const char* pkg = nullptr, *dir = nullptr;
         if (args->nice_name)    pkg = env->GetStringUTFChars(args->nice_name,    nullptr);
         if (args->app_data_dir) dir = env->GetStringUTFChars(args->app_data_dir, nullptr);
         preSpecialize(pkg ? pkg : "", dir ? dir : "");
@@ -843,33 +1050,27 @@ public:
 
     void postAppSpecialize(const zygisk::AppSpecializeArgs*) override {
         if (!enable_hack) return;
-        std::thread([
-            g  = std::move(game_dir),
-            o  = std::move(out_dir),
-            c  = active_cfg,
-            bd = bridge_data,
-            bl = bridge_length
-        ]() mutable {
-            hackPrepare(g, o, c, bd, bl);
+        if (s_orig_dlopen && s_orig_dlopen != dlopen) {
+            LOGI("postAppSpecialize: early hook active"); return;
+        }
+        std::thread([g = std::move(game_dir), o = std::move(out_dir), c = active_cfg]() mutable {
+            hackPrepare(g, o, c);
         }).detach();
     }
 
 private:
-    zygisk::Api* api           = nullptr;
-    JNIEnv*      env           = nullptr;
-    bool         enable_hack   = false;
-    void*        bridge_data   = nullptr;
-    size_t       bridge_length = 0;
-    std::string  game_dir;
-    std::string  out_dir;
+    zygisk::Api* api         = nullptr;
+    JNIEnv*      env         = nullptr;
+    bool         enable_hack = false;
+    std::string  game_dir, out_dir;
     config::DumperConfig active_cfg;
 
     void preSpecialize(const char* pkg, const char* app_data_dir) {
+        installSigsegvHandler();
         active_cfg = config::loadConfig();
-        LOGI("preSpecialize: pkg=%s cfg_target=%s", pkg, active_cfg.target_package.c_str());
+        LOGI("preSpecialize: pkg=%s target=%s", pkg, active_cfg.target_package.c_str());
         if (!config::isTargetPackage(active_cfg, pkg)) {
-            api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
-            return;
+            api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY); return;
         }
         LOGI("target detected: %s", pkg);
         enable_hack = true;
@@ -878,33 +1079,8 @@ private:
                       ? std::string(config::kFallbackOutput)
                       : active_cfg.output_dir;
         LOGI("output dir: %s", out_dir.c_str());
-#if defined(__i386__) || defined(__x86_64__)
-        loadArmBridgePayload();
-#endif
-    }
-
-    void loadArmBridgePayload() {
-        const char* path = nullptr;
-#if defined(__i386__)
-        path = "zygisk/armeabi-v7a.so";
-#elif defined(__x86_64__)
-        path = "zygisk/arm64-v8a.so";
-#else
-        return;
-#endif
-        int dirfd = api->getModuleDir();
-        int fd    = openat(dirfd, path, O_RDONLY);
-        if (fd == -1) { LOGW("arm bridge not found: %s", path); return; }
-        struct stat sb{};
-        fstat(fd, &sb);
-        bridge_length = static_cast<size_t>(sb.st_size);
-        bridge_data   = mmap(nullptr, bridge_length, PROT_READ, MAP_PRIVATE, fd, 0);
-        close(fd);
-        if (bridge_data == MAP_FAILED) {
-            LOGE("mmap arm bridge failed");
-            bridge_data   = nullptr;
-            bridge_length = 0;
-        }
+        if (active_cfg.enable_early_metadata_hook)
+            installDlopenHook(out_dir, active_cfg);
     }
 };
 
@@ -913,13 +1089,14 @@ REGISTER_ZYGISK_MODULE(EaquelDumperModule)
 #if defined(__arm__) || defined(__aarch64__)
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     if (!vm) return JNI_ERR;
+    installSigsegvHandler();
     std::string combined(reserved ? static_cast<const char*>(reserved) : "");
     auto sep  = combined.find('|');
     auto game = (sep != std::string::npos) ? combined.substr(0, sep) : combined;
     auto out  = (sep != std::string::npos) ? combined.substr(sep + 1) : std::string(config::kFallbackOutput);
-    config::DumperConfig cfg;
-    cfg.output_dir = out;
-    std::thread([g = std::move(game), o = std::move(out), c = std::move(cfg)]() mutable {
+    config::DumperConfig cfg = config::loadConfig();
+    if (cfg.output_dir.empty()) cfg.output_dir = out;
+    std::thread([g = std::move(game), o = cfg.output_dir, c = std::move(cfg)]() mutable {
         hackStart(g, o, c);
     }).detach();
     return JNI_VERSION_1_6;
