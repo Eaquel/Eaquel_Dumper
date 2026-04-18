@@ -45,11 +45,13 @@ jobs:
           wget -q --show-progress "$CMAKE_URL" -O cmake.tar.gz
           tar -xzf cmake.tar.gz
           sudo mv cmake-${{ env.CMAKE_VERSION }}-linux-x86_64 /opt/cmake-${{ env.CMAKE_VERSION }}
-          sudo ln -sf /opt/cmake-${{ env.CMAKE_VERSION }}/bin/* /usr/local/bin/
           cmake --version
 
-      - name: "📌 Set CMake DIR env"
-        run: echo "CMAKE_DIR=/opt/cmake-${{ env.CMAKE_VERSION }}" >> $GITHUB_ENV
+      - name: "📌 Write local.properties"
+        run: |
+          echo "cmake.dir=/opt/cmake-${{ env.CMAKE_VERSION }}" >> local.properties
+          echo "sdk.dir=$ANDROID_SDK_ROOT"                    >> local.properties
+          cat local.properties
 
       - name: "🔄 Cache NDK"
         id: cache-ndk
@@ -68,8 +70,7 @@ jobs:
       - name: "🏗️ Build Release"
         run: |
           ./gradlew :Dumper:assembleRelease \
-            --no-daemon --stacktrace --build-cache --parallel \
-            -Pandroid.cmake.dir=${{ env.CMAKE_DIR }}
+            --no-daemon --stacktrace --build-cache --parallel
         env:
           GRADLE_OPTS: "-Xmx6g -XX:+HeapDumpOnOutOfMemoryError"
 
