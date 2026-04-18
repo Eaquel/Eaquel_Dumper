@@ -1,5 +1,5 @@
 plugins {
-    id("com.android.library") version libs.versions.agp.get() apply false
+    id("com.android.library") version "9.1.1" apply false
 }
 
 apply(from = "module.gradle.kts")
@@ -14,7 +14,7 @@ tasks.register<Delete>("clean") {
 gradle.projectsEvaluated {
     logger.lifecycle("─────────────────────────────────────────────────────")
     logger.lifecycle("  🦊 Eaquel Dumper — Root project configured")
-    logger.lifecycle("  AGP   : ${libs.versions.agp.get()}")
+    logger.lifecycle("  AGP   : 9.1.1")
     logger.lifecycle("  Gradle: ${gradle.gradleVersion}")
     logger.lifecycle("─────────────────────────────────────────────────────")
 }
