@@ -41,17 +41,15 @@ jobs:
         if: steps.cache-cmake.outputs.cache-hit != 'true'
         run: |
           echo "Downloading CMake ${{ env.CMAKE_VERSION }}..."
-
           CMAKE_URL="https://github.com/Kitware/CMake/releases/download/v${{ env.CMAKE_VERSION }}/cmake-${{ env.CMAKE_VERSION }}-linux-x86_64.tar.gz"
-
           wget -q --show-progress "$CMAKE_URL" -O cmake.tar.gz
           tar -xzf cmake.tar.gz
-
           sudo mv cmake-${{ env.CMAKE_VERSION }}-linux-x86_64 /opt/cmake-${{ env.CMAKE_VERSION }}
           sudo ln -sf /opt/cmake-${{ env.CMAKE_VERSION }}/bin/* /usr/local/bin/
-
-          echo "CMAKE_ROOT=/opt/cmake-${{ env.CMAKE_VERSION }}" >> $GITHUB_ENV
           cmake --version
+
+      - name: "📌 Set CMake DIR env"
+        run: echo "CMAKE_DIR=/opt/cmake-${{ env.CMAKE_VERSION }}" >> $GITHUB_ENV
 
       - name: "🔄 Cache NDK"
         id: cache-ndk
@@ -69,12 +67,11 @@ jobs:
 
       - name: "🏗️ Build Release"
         run: |
-        ./gradlew :Dumper:assembleRelease \
-       --no-daemon --stacktrace --build-cache --parallel \
-       -Pandroid.ndkVersion=${{ env.NDK_VERSION }}
+          ./gradlew :Dumper:assembleRelease \
+            --no-daemon --stacktrace --build-cache --parallel \
+            -Pandroid.cmake.dir=${{ env.CMAKE_DIR }}
         env:
-       GRADLE_OPTS: "-Xmx6g -XX:+HeapDumpOnOutOfMemoryError"
-       ANDROID_CMAKE_DIR: /opt/cmake-${{ env.CMAKE_VERSION }}/bin
+          GRADLE_OPTS: "-Xmx6g -XX:+HeapDumpOnOutOfMemoryError"
 
       - name: "📤 Upload Artifact"
         uses: actions/upload-artifact@v4
