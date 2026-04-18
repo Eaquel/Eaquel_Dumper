@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.0.0)
+cmake_minimum_required(VERSION 4.3.1)
 
 if(NOT DEFINED MODULE_NAME)
     message(FATAL_ERROR "MODULE_NAME must be set, e.g. -DMODULE_NAME=eaqueldumper")
