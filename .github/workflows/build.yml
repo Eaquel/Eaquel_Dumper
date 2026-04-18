@@ -2,161 +2,69 @@ name: "🦊 Eaquel Dumper — Build Pipeline"
 
 on:
   workflow_dispatch:
-    inputs:
-      build_variant:
-        description: "🔧 Build Variant"
-        required: false
-        default: "release"
-        type: choice
-        options:
-          - release
-          - debug
-
-      output_dir:
-        description: "📂 Output Directory (on device)"
-        required: false
-        default: "/sdcard/Eaquel"
-
-      generate_cpp_header:
-        description: "🗂️ Generate C++ Header (dump.h)"
-        required: false
-        default: "true"
-        type: choice
-        options:
-          - "true"
-          - "false"
-
-      generate_frida_script:
-        description: "🎯 Generate Frida Script (dump.js)"
-        required: false
-        default: "true"
-        type: choice
-        options:
-          - "true"
-          - "false"
 
 env:
-  NDK_VERSION:   "29.0.14206865"
+  NDK_VERSION: "29.0.14206865"
   CMAKE_VERSION: "4.0.0"
-  JAVA_VERSION:  "21"
-  CACHE_VER:     "v3" 
+  JAVA_VERSION: "21"
+  CACHE_VER: "v4"
 
 jobs:
-
   build:
-    name: "🏗️  Assemble · ${{ github.event.inputs.build_variant }}"
-    runs-on: ubuntu-latest
+    name: "🏗️ Assemble Release"
+    runs-on: ubuntu-24.04
 
     steps:
-
-      - name: "📥  Checkout Repository"
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: "☕  Setup Java ${{ env.JAVA_VERSION }} (Temurin LTS)"
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version:  ${{ env.JAVA_VERSION }}
-          cache:         gradle
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
 
-      - name: "  Setup Android SDK"
-        uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v3
         with:
-          packages: ""
+          cmdline-tools-version: latest
 
-      - name: "  Cache NDK"
-        id: cache-ndk
+      - id: cache-ndk
         uses: actions/cache@v4
         with:
           path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
-          key:  ndk-${{ env.NDK_VERSION }}-${{ env.CACHE_VER }}
+          key: ndk-${{ env.NDK_VERSION }}-${{ env.CACHE_VER }}
 
-      - name: "Cache CMake"
-        id: cache-cmake
+      - id: cache-cmake
         uses: actions/cache@v4
         with:
           path: /usr/local/lib/android/sdk/cmake/${{ env.CMAKE_VERSION }}
-          key:  cmake-${{ env.CMAKE_VERSION }}-${{ env.CACHE_VER }}
+          key: cmake-${{ env.CMAKE_VERSION }}-${{ env.CACHE_VER }}
 
-      - name: "  Install NDK ${{ env.NDK_VERSION }}"
-        if: steps.cache-ndk.outputs.cache-hit != 'true'
-        run: sdkmanager "ndk;${{ env.NDK_VERSION }}"
+      - run: |
+          sdkmanager --install "ndk;${{ env.NDK_VERSION }}" "cmake;${{ env.CMAKE_VERSION }}"
+        if: steps.cache-ndk.outputs.cache-hit != 'true' || steps.cache-cmake.outputs.cache-hit != 'true'
 
-      - name: "  Install CMake ${{ env.CMAKE_VERSION }}"
-        if: steps.cache-cmake.outputs.cache-hit != 'true'
-        run: sdkmanager "cmake;${{ env.CMAKE_VERSION }}"
+      - run: chmod +x ./gradlew
 
-      - name: "  Bake Runtime Config"
-        run: |
-          OUTPUT_DIR="${{ github.event.inputs.output_dir }}"
-          CPP_HEADER="${{ github.event.inputs.generate_cpp_header }}"
-          FRIDA="${{ github.event.inputs.generate_frida_script }}"
-          VARIANT="${{ github.event.inputs.build_variant }}"
-
-          cat > eaquel_config.json <<EOF
-          {
-            "target_package"        : "",
-            "output_dir"            : "${OUTPUT_DIR}",
-            "generate_cpp_header"   : ${CPP_HEADER},
-            "generate_frida_script" : ${FRIDA},
-            "build_variant"         : "${VARIANT}",
-            "build_time"            : "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "build_number"          : ${{ github.run_number }}
-          }
-          EOF
-
-          echo "──────────────────────────────────────"
-          echo "  eaquel_config.json (baked at build)"
-          echo "──────────────────────────────────────"
-          cat eaquel_config.json
-
-      - name: "📝  Patch Module Description (Gradle property)"
-        run: |
-          VARIANT="${{ github.event.inputs.build_variant }}"
-          echo "moduleDescriptionOverride=[${VARIANT}] Runtime IL2CPP binary resolver — JSON-config driven — API 30-36." \
-            >> gradle.properties
-
-      - name: "🔑  Grant Gradlew Permissions"
-        run: chmod +x ./gradlew
-
-      - name: "🏗️  Build · ${{ github.event.inputs.build_variant }}"
-        run: |
-          VARIANT="${{ github.event.inputs.build_variant }}"
-          VARIANT_CAP="$(echo "${VARIANT:0:1}" | tr '[:lower:]' '[:upper:]')${VARIANT:1}"
-          ./gradlew :Dumper:assemble${VARIANT_CAP} \
-            --no-daemon   \
-            --stacktrace  \
-            --build-cache \
-            --parallel
+      - run: |
+          ./gradlew :Dumper:assembleRelease \
+            --no-daemon --stacktrace --build-cache --parallel
         env:
-          GRADLE_OPTS: "-Xmx4g -XX:+HeapDumpOnOutOfMemoryError"
+          GRADLE_OPTS: "-Xmx6g -XX:+HeapDumpOnOutOfMemoryError"
 
-      - name: "📤  Upload Artifact"
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name:              "eaquel-dumper-${{ github.event.inputs.build_variant }}-r${{ github.run_number }}"
-          path:              "out/skeleton_${{ github.event.inputs.build_variant }}/"
-          retention-days:    14
+          name: eaquel-dumper-release
+          path: out/
+          retention-days: 30
           compression-level: 9
-          if-no-files-found: warn
 
-      - name: "📋  Build Summary"
-        if: always()
+      - if: always()
         run: |
           echo "## 🦊 Eaquel Dumper Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo ""                                   >> $GITHUB_STEP_SUMMARY
-          echo "| Field               | Value |"   >> $GITHUB_STEP_SUMMARY
-          echo "|---------------------|-------|"   >> $GITHUB_STEP_SUMMARY
-          echo "| Variant             | \`${{ github.event.inputs.build_variant }}\`    |" >> $GITHUB_STEP_SUMMARY
-          echo "| NDK                 | \`${{ env.NDK_VERSION }}\`              |" >> $GITHUB_STEP_SUMMARY
-          echo "| CMake               | \`${{ env.CMAKE_VERSION }}\`            |" >> $GITHUB_STEP_SUMMARY
-          echo "| Java                | \`Temurin ${{ env.JAVA_VERSION }}\`     |" >> $GITHUB_STEP_SUMMARY
-          echo "| Output Dir          | \`${{ github.event.inputs.output_dir }}\`|" >> $GITHUB_STEP_SUMMARY
-          echo "| C++ Header          | \`${{ github.event.inputs.generate_cpp_header }}\`|" >> $GITHUB_STEP_SUMMARY
-          echo "| Frida Script        | \`${{ github.event.inputs.generate_frida_script }}\`|" >> $GITHUB_STEP_SUMMARY
-          echo "| Run Number          | \`#${{ github.run_number }}\`           |" >> $GITHUB_STEP_SUMMARY
-          echo "| Cache Version       | \`${{ env.CACHE_VER }}\`               |" >> $GITHUB_STEP_SUMMARY
-          echo ""                                   >> $GITHUB_STEP_SUMMARY
-          echo "> **target_package** is intentionally blank — set at runtime via WebUI or \`adb push\`." >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Variant | Release |" >> $GITHUB_STEP_SUMMARY
+          echo "| NDK | ${{ env.NDK_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | Success |" >> $GITHUB_STEP_SUMMARY
