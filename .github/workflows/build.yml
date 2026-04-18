@@ -1,7 +1,7 @@
 name: "🦊 Eaquel Dumper — Ultimate Build Pipeline"
 
 on:
-  workflow_dispatch:   # Sadece butona bas, direkt derle
+  workflow_dispatch:
 
 env:
   NDK_VERSION:   "29.0.14206865"
@@ -30,7 +30,6 @@ jobs:
       - name: "📦 Setup Android SDK"
         uses: android-actions/setup-android@v4
 
-      # Cache'ler
       - name: "🔄 Cache NDK"
         id: cache-ndk
         uses: actions/cache@v4
@@ -45,16 +44,19 @@ jobs:
           path: /opt/cmake-${{ env.CMAKE_VERSION }}
           key: cmake-\( {{ env.CMAKE_VERSION }}- \){{ env.CACHE_VER }}
 
-      # CMake 4.3.1 Manuel Kurulum
-      - name: "🛠️ Install CMake 4.3.1"
+- name: "🛠️ Install CMake 4.3.1"
         if: steps.cache-cmake.outputs.cache-hit != 'true'
         run: |
           echo "Downloading CMake ${{ env.CMAKE_VERSION }}..."
+          
           CMAKE_URL="https://github.com/Kitware/CMake/releases/download/v\( {{ env.CMAKE_VERSION }}/cmake- \){{ env.CMAKE_VERSION }}-linux-x86_64.tar.gz"
+          
           wget -q --show-progress "$CMAKE_URL" -O cmake.tar.gz
           tar -xzf cmake.tar.gz
+          
           sudo mv cmake-\( {{ env.CMAKE_VERSION }}-linux-x86_64 /opt/cmake- \){{ env.CMAKE_VERSION }}
           sudo ln -sf /opt/cmake-${{ env.CMAKE_VERSION }}/bin/* /usr/local/bin/
+          
           echo "CMAKE_ROOT=/opt/cmake-${{ env.CMAKE_VERSION }}" >> $GITHUB_ENV
           cmake --version
 
