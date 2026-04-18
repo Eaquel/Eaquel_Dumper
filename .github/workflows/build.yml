@@ -30,21 +30,16 @@ jobs:
       - name: "📦 Setup Android SDK"
         uses: android-actions/setup-android@v4
 
-      - name: "🔄 Cache NDK"
-        id: cache-ndk
-        uses: actions/cache@v4
-        with:
-          path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
-          key: ndk-\( {{ env.NDK_VERSION }}- \){{ env.CACHE_VER }}
-
-      - name: "🔄 Cache CMake 4.3.1"
+      # CMake Cache
+      - name: "🔄 Cache CMake"
         id: cache-cmake
         uses: actions/cache@v4
         with:
           path: /opt/cmake-${{ env.CMAKE_VERSION }}
           key: cmake-\( {{ env.CMAKE_VERSION }}- \){{ env.CACHE_VER }}
 
-      - name: "🛠️ Install CMake 4.3.1"
+      # CMake Kurulumu
+      - name: "🛠️ Install CMake ${{ env.CMAKE_VERSION }}"
         if: steps.cache-cmake.outputs.cache-hit != 'true'
         run: |
           echo "Downloading CMake ${{ env.CMAKE_VERSION }}..."
@@ -60,6 +55,14 @@ jobs:
           echo "CMAKE_ROOT=/opt/cmake-${{ env.CMAKE_VERSION }}" >> $GITHUB_ENV
           cmake --version
 
+      # NDK Cache
+      - name: "🔄 Cache NDK"
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
+          key: ndk-\( {{ env.NDK_VERSION }}- \){{ env.CACHE_VER }}
+
       # NDK Kurulumu
       - name: "🛠️ Install NDK"
         if: steps.cache-ndk.outputs.cache-hit != 'true'
@@ -68,7 +71,7 @@ jobs:
       - name: "🔑 Make gradlew executable"
         run: chmod +x ./gradlew
 
-      # Build (Sadece Release)
+      # Build
       - name: "🏗️ Build Release"
         run: |
           ./gradlew :Dumper:assembleRelease \
