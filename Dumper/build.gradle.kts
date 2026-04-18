@@ -67,7 +67,7 @@ androidComponents {
     onVariants { variant ->
         val variantCapped = variant.name.replaceFirstChar { it.uppercase() }
         val variantLower  = variant.name.lowercase()
-        val skeletonDir   = file("$outDir/$variantLower")   // ← skeleton_ prefix kaldırıldı
+        val skeletonDir   = outDir
 
         val skeletonLibDir    = skeletonDir.resolve("lib")
         val skeletonZygiskDir = skeletonDir.resolve("zygisk")
