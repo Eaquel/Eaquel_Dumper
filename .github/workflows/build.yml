@@ -69,10 +69,12 @@ jobs:
 
       - name: "🏗️ Build Release"
         run: |
-          ./gradlew :Dumper:assembleRelease \
-            --no-daemon --stacktrace --build-cache --parallel
+        ./gradlew :Dumper:assembleRelease \
+       --no-daemon --stacktrace --build-cache --parallel \
+       -Pandroid.ndkVersion=${{ env.NDK_VERSION }}
         env:
-          GRADLE_OPTS: "-Xmx6g -XX:+HeapDumpOnOutOfMemoryError"
+       GRADLE_OPTS: "-Xmx6g -XX:+HeapDumpOnOutOfMemoryError"
+       ANDROID_CMAKE_DIR: /opt/cmake-${{ env.CMAKE_VERSION }}/bin
 
       - name: "📤 Upload Artifact"
         uses: actions/upload-artifact@v4
