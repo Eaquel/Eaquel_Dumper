@@ -30,40 +30,36 @@ jobs:
       - name: "📦 Setup Android SDK"
         uses: android-actions/setup-android@v4
 
-      # CMake Cache
       - name: "🔄 Cache CMake"
         id: cache-cmake
         uses: actions/cache@v4
         with:
           path: /opt/cmake-${{ env.CMAKE_VERSION }}
-          key: cmake-\( {{ env.CMAKE_VERSION }}- \){{ env.CACHE_VER }}
+          key: cmake-${{ env.CMAKE_VERSION }}-${{ env.CACHE_VER }}
 
-      # CMake Kurulumu
       - name: "🛠️ Install CMake ${{ env.CMAKE_VERSION }}"
         if: steps.cache-cmake.outputs.cache-hit != 'true'
         run: |
           echo "Downloading CMake ${{ env.CMAKE_VERSION }}..."
-          
-          CMAKE_URL="https://github.com/Kitware/CMake/releases/download/v\( {{ env.CMAKE_VERSION }}/cmake- \){{ env.CMAKE_VERSION }}-linux-x86_64.tar.gz"
-          
+
+          CMAKE_URL="https://github.com/Kitware/CMake/releases/download/v${{ env.CMAKE_VERSION }}/cmake-${{ env.CMAKE_VERSION }}-linux-x86_64.tar.gz"
+
           wget -q --show-progress "$CMAKE_URL" -O cmake.tar.gz
           tar -xzf cmake.tar.gz
-          
-          sudo mv cmake-\( {{ env.CMAKE_VERSION }}-linux-x86_64 /opt/cmake- \){{ env.CMAKE_VERSION }}
+
+          sudo mv cmake-${{ env.CMAKE_VERSION }}-linux-x86_64 /opt/cmake-${{ env.CMAKE_VERSION }}
           sudo ln -sf /opt/cmake-${{ env.CMAKE_VERSION }}/bin/* /usr/local/bin/
-          
+
           echo "CMAKE_ROOT=/opt/cmake-${{ env.CMAKE_VERSION }}" >> $GITHUB_ENV
           cmake --version
 
-      # NDK Cache
       - name: "🔄 Cache NDK"
         id: cache-ndk
         uses: actions/cache@v4
         with:
           path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
-          key: ndk-\( {{ env.NDK_VERSION }}- \){{ env.CACHE_VER }}
+          key: ndk-${{ env.NDK_VERSION }}-${{ env.CACHE_VER }}
 
-      # NDK Kurulumu
       - name: "🛠️ Install NDK"
         if: steps.cache-ndk.outputs.cache-hit != 'true'
         run: sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
@@ -71,7 +67,6 @@ jobs:
       - name: "🔑 Make gradlew executable"
         run: chmod +x ./gradlew
 
-      # Build
       - name: "🏗️ Build Release"
         run: |
           ./gradlew :Dumper:assembleRelease \
