@@ -32,7 +32,7 @@ android {
                     "-DCMAKE_BUILD_TYPE=Release"
                 )
                 cppFlags("-std=c++23")
-                abiFilters("arm64-v8a", "armeabi-v7a")
+                abiFilters("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
             }
         }
     }
@@ -68,7 +68,7 @@ androidComponents {
     onVariants { variant ->
         val variantCapped = variant.name.replaceFirstChar { it.uppercase() }
         val variantLower  = variant.name.lowercase()
-        val skeletonDir   = file("$outDir/skeleton_$variantLower")
+        val skeletonDir   = file("$outDir/$variantLower")   // ← skeleton_ prefix kaldırıldı
 
         val skeletonLibDir    = skeletonDir.resolve("lib")
         val skeletonZygiskDir = skeletonDir.resolve("zygisk")
