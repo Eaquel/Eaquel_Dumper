@@ -38,6 +38,7 @@ static inline const char* safeStr(const char* s, const char* fallback = "") {
 
 static void runApiInit(uintptr_t base);
 static void runDump(const std::string& out_dir, const config::DumperConfig& cfg);
+static void hackStart(const std::string&, const std::string&, const config::DumperConfig&);
 
 static std::string          s_early_out_dir;
 static config::DumperConfig s_early_cfg;
