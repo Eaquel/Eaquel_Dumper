@@ -1,16 +1,5 @@
 #pragma once
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Core.hpp  —  Eaquel Dumper v2.0
-//  Architecture : ReZygisk (replaces Zygisk entirely)
-//  Key upgrades :
-//    • Stealth mprotect  → RW-only patch window; no persistent RWX pages
-//    • Adaptive Scanner  → multi-strategy prologue + hash-lattice fallback
-//    • Async Waiter      → inotify + eventfd; zero sleep() calls visible
-//    • Config Hot-Reload → inotify watches Eaquel_Config.json; live update
-//    • force_32bit_mode / auto_detect_bit → fully automatic, no JSON fields
-// ═══════════════════════════════════════════════════════════════════════════
-
 #include <android/log.h>
 #include <cstddef>
 #include <cstdint>
@@ -40,14 +29,12 @@
 #include <signal.h>
 #include <errno.h>
 
-// ── Logging ────────────────────────────────────────────────────────────────
 #define LOG_TAG "Eaquel"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 
-// ── IL2CPP attribute constants ─────────────────────────────────────────────
 inline constexpr uint32_t FIELD_ATTRIBUTE_FIELD_ACCESS_MASK    = 0x0007;
 inline constexpr uint32_t FIELD_ATTRIBUTE_COMPILER_CONTROLLED  = 0x0000;
 inline constexpr uint32_t FIELD_ATTRIBUTE_PRIVATE              = 0x0001;
@@ -161,14 +148,12 @@ inline constexpr uint32_t ASSEMBLYREF_RETARGETABLE_FLAG                = 0x00000
 inline constexpr uint32_t ASSEMBLYREF_ENABLEJITCOMPILE_TRACKING_FLAG   = 0x00008000;
 inline constexpr uint32_t ASSEMBLYREF_DISABLEJITCOMPILE_OPTIMIZER_FLAG = 0x00004000;
 
-// ── IL2CPP type aliases ────────────────────────────────────────────────────
 using Il2CppChar            = uint16_t;
 using il2cpp_array_size_t   = uintptr_t;
 using TypeDefinitionIndex   = int32_t;
 using GenericParameterIndex = int32_t;
 using Il2CppNativeChar      = char;
 
-// Forward declarations
 struct Il2CppMemoryCallbacks;
 struct Il2CppImage;
 struct Il2CppClass;
@@ -361,11 +346,8 @@ DO_API(char*,         il2cpp_type_get_name,        (const Il2CppType* type))
 DO_API(int,           il2cpp_type_get_type,        (const Il2CppType* type))
 DO_API(void,          il2cpp_set_default_thread_affinity, (int64_t affinity_mask))
 
-#endif // DO_API
+#endif
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  entropy  —  Metadata encryption detection & XOR key discovery
-// ═══════════════════════════════════════════════════════════════════════════
 namespace entropy {
 
 inline constexpr uint32_t kIl2CppMetadataMagic = 0xFAB11BAF;
@@ -422,16 +404,6 @@ struct XorKeyResult {
 
 } // namespace entropy
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  scanner  —  Adaptive IL2CPP symbol resolver
-//
-//  Strategy priority (per symbol, first hit wins):
-//    1. dlsym() exact name
-//    2. Mangled C++ symbol (_ZN6il2cpp...)
-//    3. Primary static prologue pattern  (strict match)
-//    4. Fuzzy prologue pattern           (first 4 bytes fixed, rest wildcard)
-//    5. Hash-lattice scan                (FNV-1a hash of 16-byte windows)
-// ═══════════════════════════════════════════════════════════════════════════
 namespace scanner {
 
 struct PatternByte { uint8_t value; bool is_wildcard; };
@@ -439,7 +411,6 @@ struct PatternByte { uint8_t value; bool is_wildcard; };
 template<size_t N>
 using Pattern = std::array<PatternByte, N>;
 
-// ── ARM64 prologue patterns ────────────────────────────────────────────────
 namespace arm64_prologue {
 
 inline constexpr auto kDomainGet = Pattern<8>{{
@@ -504,7 +475,6 @@ inline constexpr auto kMetadataDecrypt = Pattern<12>{{
 
 } // namespace arm64_prologue
 
-// ── ARM32 prologue patterns ────────────────────────────────────────────────
 namespace arm32_prologue {
 
 inline constexpr auto kMetadataLoader32 = Pattern<8>{{
@@ -562,7 +532,6 @@ struct ResolvedSymbols {
     return MappedRegion{ base & ~(page - 1), kMaxScanSize };
 }
 
-// ── Strict pattern scan ─────────────────────────────────────────────────────
 template<size_t N>
 [[nodiscard]] static std::optional<uintptr_t> scanPattern(
     const MappedRegion& region, const Pattern<N>& pattern, size_t alignment = 4
@@ -580,7 +549,6 @@ template<size_t N>
     return std::nullopt;
 }
 
-// ── Fuzzy scan: only the first kAnchorBytes are matched ───────────────────
 template<size_t N, size_t kAnchorBytes = 4>
 [[nodiscard]] static std::optional<uintptr_t> scanPatternFuzzy(
     const MappedRegion& region, const Pattern<N>& pattern, size_t alignment = 4
@@ -599,9 +567,6 @@ template<size_t N, size_t kAnchorBytes = 4>
     return std::nullopt;
 }
 
-// ── Hash-lattice scan: FNV-1a fingerprint of 16-byte windows ──────────────
-//   Used as a last-resort when prologues are obfuscated.
-//   Hashes are precomputed from known-good binaries; more can be added.
 [[nodiscard]] static std::optional<uintptr_t> scanByHashLattice(
     const MappedRegion& region,
     const std::vector<uint32_t>& known_hashes,
@@ -611,7 +576,6 @@ template<size_t N, size_t kAnchorBytes = 4>
     auto* mem   = reinterpret_cast<const uint8_t*>(region.base);
     auto  limit = (region.size > kWindowSize) ? (region.size - kWindowSize) : 0;
     for (size_t off = 0; off < limit; off += alignment) {
-        // FNV-1a 32-bit
         uint32_t hash = 2166136261u;
         for (size_t i = 0; i < kWindowSize; ++i) {
             hash ^= static_cast<uint32_t>(mem[off + i]);
@@ -623,9 +587,6 @@ template<size_t N, size_t kAnchorBytes = 4>
     return std::nullopt;
 }
 
-// ── Known FNV-1a hashes for critical il2cpp prologues (ARM64) ─────────────
-//   These were computed from Unity 2022/2023/2024/2025/2026 libil2cpp.so
-//   binaries. Additional hashes can be appended without changing the scanner.
 namespace known_hashes {
     inline constexpr std::array<uint32_t, 6> kDomainGet64 = {{
         0x7A3F21BCu, 0x91B4E57Cu, 0xC302A18Du,
@@ -636,7 +597,6 @@ namespace known_hashes {
     }};
 } // namespace known_hashes
 
-// ── Readable-address check (msync probe) ─────────────────────────────────
 [[nodiscard]] static bool isReadableAddress(uintptr_t address) {
     if (address == 0) return false;
     auto page    = static_cast<uintptr_t>(getpagesize());
@@ -644,8 +604,6 @@ namespace known_hashes {
     return msync(aligned, page, MS_ASYNC) == 0;
 }
 
-// ── Adaptive symbol resolver  ─────────────────────────────────────────────
-//   Runs all strategies in order; first success wins.
 [[nodiscard]] static ResolvedSymbols scanAllSymbols(uintptr_t library_base) {
     auto region = resolveExecutableRegion(library_base);
     if (!region) {
@@ -654,25 +612,21 @@ namespace known_hashes {
     }
     ResolvedSymbols s;
 
-    // Helper: strict scan → fuzzy → hash lattice
     auto adaptive_scan = [&](auto& field,
                               const auto& pat,
                               const std::vector<uint32_t>& hashes,
                               const char* name) {
         if (field) return;
-        // Strategy 1 – strict prologue
         if (auto a = scanPattern(*region, pat)) {
             field = *a;
             LOGI("scanner[strict]: %s -> 0x%" PRIxPTR, name, field);
             return;
         }
-        // Strategy 2 – fuzzy prologue (anchor-4 only)
         if (auto a = scanPatternFuzzy(*region, pat)) {
             field = *a;
             LOGI("scanner[fuzzy]: %s -> 0x%" PRIxPTR, name, field);
             return;
         }
-        // Strategy 3 – hash-lattice fingerprint
         if (!hashes.empty()) {
             if (auto a = scanByHashLattice(*region, hashes)) {
                 field = *a;
@@ -728,7 +682,6 @@ namespace known_hashes {
     return s;
 }
 
-// ── dl_iterate_phdr helper ─────────────────────────────────────────────────
 static int dl_iterate_phdr_callback(struct dl_phdr_info* info, size_t, void* data) {
     if (info->dlpi_name && strstr(info->dlpi_name, "libil2cpp.so")) {
         *reinterpret_cast<uintptr_t*>(data) = static_cast<uintptr_t>(info->dlpi_addr);
@@ -743,7 +696,6 @@ static int dl_iterate_phdr_callback(struct dl_phdr_info* info, size_t, void* dat
     return base;
 }
 
-// ── SIGSEGV handler ────────────────────────────────────────────────────────
 static void sigsegv_handler(int sig, siginfo_t* info, void* ucontext) {
     (void)ucontext;
     LOGE("SIGSEGV caught sig=%d addr=%p", sig, info ? info->si_addr : nullptr);
@@ -756,15 +708,6 @@ static void sigsegv_handler(int sig, siginfo_t* info, void* ucontext) {
 
 } // namespace scanner
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  config  —  Live-reloading config system
-//
-//  • force_32bit_mode / auto_detect_bit are REMOVED from JSON:
-//    bit-width is detected automatically at compile time.
-//  • An inotify watcher thread is started once; it pushes parsed
-//    DumperConfig snapshots to registered callbacks on any write to the
-//    JSON file — no process restart needed.
-// ═══════════════════════════════════════════════════════════════════════════
 namespace config {
 
 inline constexpr std::string_view kConfigPathPrimary = "/sdcard/Eaquel_Config.json";
@@ -775,8 +718,6 @@ inline constexpr std::string_view kFallbackOutputMod = "/data/adb/modules/eaquel
 inline constexpr std::string_view kFallbackOutputKsu = "/data/adb/ksu/modules/eaquel_dumper/Eaquel_Dumps";
 inline constexpr std::string_view kCacheDir          = "/data/local/tmp/.eaq_cache";
 
-// NOTE: force_32bit_mode and auto_detect_bit are no longer JSON fields.
-//       Architecture is resolved automatically via compiler defines.
 struct DumperConfig {
     std::string Target_Game;
     std::string Output            = "/sdcard/Eaquel_Dumps";
@@ -784,11 +725,9 @@ struct DumperConfig {
     bool        Frida_Script      = true;
     bool        include_generic   = true;
     bool        Protected_Breaker = true;
-    // Derived automatically — never read from JSON
     bool        is_64bit          = (sizeof(void*) == 8);
 };
 
-// ── Minimal JSON helpers ───────────────────────────────────────────────────
 [[nodiscard]] static std::optional<std::string> extractJsonString(
     const std::string& json, std::string_view key)
 {
@@ -838,14 +777,13 @@ struct DumperConfig {
 [[nodiscard]] static DumperConfig parseJsonConfig(const std::string& json) {
     DumperConfig cfg;
     cfg.Output   = std::string(kFallbackOutput);
-    cfg.is_64bit = (sizeof(void*) == 8); // always auto
+    cfg.is_64bit = (sizeof(void*) == 8);
     if (auto v = extractJsonString(json, "Target_Game"); v && !v->empty()) cfg.Target_Game = *v;
     if (auto v = extractJsonString(json, "Output");      v && !v->empty()) cfg.Output      = *v;
     cfg.Cpp_Header        = extractJsonBool(json, "Cpp_Header",        true);
     cfg.Frida_Script      = extractJsonBool(json, "Frida_Script",      true);
     cfg.include_generic   = extractJsonBool(json, "include_generic",   true);
     cfg.Protected_Breaker = extractJsonBool(json, "Protected_Breaker", true);
-    // force_32bit_mode / auto_detect_bit silently ignored if present
     return cfg;
 }
 
@@ -874,29 +812,21 @@ struct DumperConfig {
     return !cfg.Target_Game.empty() && cfg.Target_Game == pkg;
 }
 
-// ── Hot-reload watcher ─────────────────────────────────────────────────────
-//   Starts a daemon thread that uses inotify to watch the config file.
-//   On IN_CLOSE_WRITE or IN_MOVED_TO the callback is invoked synchronously
-//   from the watcher thread with the freshly parsed config — no sleep().
-//   Call stopConfigWatcher() to signal clean shutdown (eventfd wake).
 class ConfigWatcher {
 public:
     using Callback = std::function<void(const DumperConfig&)>;
 
-    // Returns false if inotify is unavailable (very old kernel).
     bool start(Callback cb) {
-        cb_          = std::move(cb);
-        ifd_         = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+        cb_  = std::move(cb);
+        ifd_ = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
         if (ifd_ < 0) { LOGE("inotify_init1 failed errno=%d", errno); return false; }
-        efd_         = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+        efd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
         if (efd_ < 0) { LOGE("eventfd failed errno=%d", errno); ::close(ifd_); ifd_=-1; return false; }
 
-        // Watch all three candidate config directories
         const std::string_view paths[] = {
             kConfigPathPrimary, kConfigPathModule, kConfigPathKsu
         };
         for (auto p : paths) {
-            // inotify watches directories, not files — get parent dir
             std::string dir(p);
             auto slash = dir.rfind('/');
             if (slash != std::string::npos) dir.resize(slash);
@@ -934,16 +864,12 @@ private:
         fds[0] = { ifd_, POLLIN, 0 };
         fds[1] = { efd_, POLLIN, 0 };
 
-        // Config file basenames to watch
-        const char* kFileNames[] = {
-            "Eaquel_Config.json", nullptr
-        };
+        const char* kFileNames[] = { "Eaquel_Config.json", nullptr };
 
         while (running_.load(std::memory_order_acquire)) {
-            int ret = poll(fds, 2, -1); // blocks until event or wake
+            int ret = poll(fds, 2, -1);
             if (ret <= 0) continue;
-            if (fds[1].revents & POLLIN) break; // eventfd wake → stop
-
+            if (fds[1].revents & POLLIN) break;
             if (!(fds[0].revents & POLLIN)) continue;
             ssize_t len = read(ifd_, buf, sizeof(buf));
             if (len <= 0) continue;
@@ -960,13 +886,10 @@ private:
                 }
             }
             if (reload) {
-                // Small settle — use a short read() on a self-pipe instead
-                // of sleep() so the delay is invisible to thread monitors.
-                // 80ms is enough for apps that do atomic rename-into-place.
                 int settle_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
                 if (settle_fd >= 0) {
                     struct pollfd pf = { settle_fd, POLLIN, 0 };
-                    poll(&pf, 1, 80); // harmless timeout, not a sleep
+                    poll(&pf, 1, 80);
                     ::close(settle_fd);
                 }
                 auto cfg = loadConfig();

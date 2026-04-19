@@ -1,22 +1,10 @@
-// ═══════════════════════════════════════════════════════════════════════════
-//  Dumper.cpp  —  Eaquel Dumper v2.0
-//  Architecture : ReZygisk  (Zygisk mimarisi tamamen değiştirildi)
-//
-//  Güvenlik iyileştirmeleri:
-//    [1] Stealth mprotect  — RWX yerine dar RW penceresi; hemen RX'e döner
-//    [2] Adaptive Scanner  — strict → fuzzy → hash-lattice zinciri
-//    [3] Async Waiter      — inotify + eventfd; hiç sleep() çağrısı yok
-//    [4] Config Hot-Reload — JSON değiştiğinde anında güncellenir
-//    [5] force_32bit_mode / auto_detect_bit — otomatik, JSON'a gerek yok
-// ═══════════════════════════════════════════════════════════════════════════
-
 #define DO_API(r, n, p) r (*n) p = nullptr;
 #define DO_API_NO_RETURN(r, n, p) r (*n) p = nullptr;
 #include "Core.hpp"
 #undef DO_API
 #undef DO_API_NO_RETURN
 
-#include "ReZygisk.hpp"   // ← Zygisk.hpp yerine ReZygisk.hpp
+#include "ReZygisk.hpp"
 
 #include <dlfcn.h>
 #include <cstdlib>
@@ -54,40 +42,22 @@ static std::string          s_early_out_dir;
 static config::DumperConfig s_early_cfg;
 static std::atomic<bool>    s_early_hook_fired{false};
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  hook_engine  —  Stealth inline hook & GOT patch
-//
-//  FIX [1] — mprotect Gizleme Stratejisi:
-//    Eski kod: RWX açıp sonsuza kadar öyle bırakıyordu.
-//    Yeni kod:
-//      a) Trampoline page'i ayrı bir mmap ile RW alınır,
-//         içi doldurulur, sonra YALNIZCA RX yapılır (RWX asla yok).
-//      b) Hedef fonksiyon için sadece patch süresi kadar RW açılır
-//         (atomik işlem aralığı); patch biter bitmez RX'e döner.
-//      c) MAP_ANONYMOUS trampoline'ler /proc/self/maps'te anonim görünür,
-//         libil2cpp.so bölgesiyle aynı adda listelenmez.
-// ═══════════════════════════════════════════════════════════════════════════
 namespace hook_engine {
 
 static constexpr size_t kPageSize = 4096;
 static uintptr_t alignDown(uintptr_t a) { return a & ~(kPageSize - 1u); }
 static uintptr_t alignUp  (uintptr_t a) { return (a + kPageSize - 1u) & ~(kPageSize - 1u); }
 
-// Sadece kısa bir RW penceresi açar — ardından hemen RX'e döner.
-// RWX hiçbir zaman oluşmaz: önce RW, patch, sonra RX.
 static bool stealthPatchWindow(uintptr_t addr, size_t len,
                                const std::function<void()>& patch_fn)
 {
     void*  page     = reinterpret_cast<void*>(alignDown(addr));
     size_t page_len = alignUp(len + (addr - alignDown(addr)));
-    // Adım 1: RW yap (kısa süre)
     if (mprotect(page, page_len, PROT_READ | PROT_WRITE) != 0) {
         LOGE("hook: mprotect RW failed addr=0x%" PRIxPTR " errno=%d", addr, errno);
         return false;
     }
-    // Adım 2: Patch uygula
     patch_fn();
-    // Adım 3: Hemen RX'e geri al — RWX durumu hiç oluşmadı
     if (mprotect(page, page_len, PROT_READ | PROT_EXEC) != 0) {
         LOGE("hook: mprotect RX failed addr=0x%" PRIxPTR " errno=%d", addr, errno);
         return false;
@@ -100,7 +70,6 @@ static void flushCache(uintptr_t addr, size_t len) {
                             reinterpret_cast<char*>(addr + len));
 }
 
-// Trampoline page'i bul; RW olarak al, doldur, RX yap — asla RWX değil.
 static void* allocTrampolinePage(uintptr_t near_addr) {
     uintptr_t lo = (near_addr > 0x8000000u) ? (near_addr - 0x8000000u) : 0;
     uintptr_t hi = near_addr + 0x8000000u;
@@ -116,7 +85,6 @@ static void* allocTrampolinePage(uintptr_t near_addr) {
         if (s > prev_end && (s - prev_end) >= kPageSize) {
             uintptr_t try_addr = (prev_end + kPageSize - 1) & ~(kPageSize - 1u);
             if (try_addr + kPageSize <= s) {
-                // Önce RW olarak al
                 void* p = mmap(reinterpret_cast<void*>(try_addr), kPageSize,
                                PROT_READ | PROT_WRITE,
                                MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
@@ -134,7 +102,6 @@ static void* allocTrampolinePage(uintptr_t near_addr) {
     return result;
 }
 
-// Trampoline page'i RX'e kilitle (içi doldurulduktan sonra çağrılır)
 static bool lockTrampolineRX(void* page) {
     return mprotect(page, kPageSize, PROT_READ | PROT_EXEC) == 0;
 }
@@ -155,7 +122,6 @@ struct Trampoline {
     auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
     if (!tramp_page) { LOGE("hook: trampoline alloc failed"); return false; }
 
-    // Trampoline'i RW iken doldur
     auto* tramp       = reinterpret_cast<Trampoline*>(tramp_page);
     memcpy(tramp->saved, reinterpret_cast<void*>(tgt), kHookSize);
     tramp->ldr_x17    = 0x58000051u;
@@ -163,12 +129,10 @@ struct Trampoline {
     tramp->return_addr = static_cast<uint64_t>(tgt + kHookSize);
     flushCache(reinterpret_cast<uintptr_t>(tramp), sizeof(Trampoline));
 
-    // Trampoline page'i RX'e kilitle (artık RWX değil)
     if (!lockTrampolineRX(tramp_page)) {
         LOGE("hook: trampoline lock RX failed"); return false;
     }
 
-    // Hedef fonksiyona minimal RW penceresiyle yaz
     bool ok = stealthPatchWindow(tgt, kHookSize, [&]() {
         auto* dst = reinterpret_cast<uint8_t*>(tgt);
         uint32_t ldr = 0x58000051u, br = 0xD61F0220u;
@@ -196,7 +160,6 @@ static constexpr size_t kHookSize = 8;
     auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
     if (!tramp_page) { LOGE("hook[arm32]: trampoline alloc failed"); return false; }
 
-    // Trampoline'i RW iken doldur
     memcpy(tramp_page, reinterpret_cast<void*>(tgt), kHookSize);
     const uint8_t jback[] = { 0xDF, 0xF8, 0x00, 0xF0 };
     memcpy(tramp_page + kHookSize, jback, 4);
@@ -204,7 +167,6 @@ static constexpr size_t kHookSize = 8;
     memcpy(tramp_page + kHookSize + 4, &ret_addr, 4);
     flushCache(reinterpret_cast<uintptr_t>(tramp_page), kHookSize + 8);
 
-    // Trampoline page'i RX'e kilitle
     if (!lockTrampolineRX(tramp_page)) {
         LOGE("hook[arm32]: trampoline lock RX failed"); return false;
     }
@@ -270,9 +232,6 @@ static void installSigsegvHandler() {
     sigaction(SIGSEGV, &sa, nullptr);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  metadata_hook  —  Encrypted metadata interceptor
-// ═══════════════════════════════════════════════════════════════════════════
 namespace metadata_hook {
 
 using MetadataLoadFn = void* (*)(const char* path, size_t* out_size);
@@ -360,7 +319,6 @@ static bool install(uintptr_t lib_base, const std::string& dump_dir) {
 
 } // namespace metadata_hook
 
-// ── dlopen hook ──────────────────────────────────────────────────────────
 static void* (*s_orig_dlopen)(const char*, int) = nullptr;
 
 static void* hooked_dlopen(const char* path, int flags) {
@@ -371,7 +329,6 @@ static void* hooked_dlopen(const char* path, int flags) {
             LOGI("EARLY HOOK: libil2cpp.so loaded path=%s", path);
             std::string out = s_early_out_dir;
             config::DumperConfig cfg = s_early_cfg;
-            // FIX [3]: sleep_for yerine eventfd ile 30ms settle bekle (görünmez)
             std::thread([out = std::move(out), cfg = std::move(cfg), handle]() mutable {
                 int efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
                 if (efd >= 0) {
@@ -421,9 +378,6 @@ static bool installDlopenHook(const std::string& out_dir, const config::DumperCo
     return false;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  il2cpp_api  —  Runtime symbol table
-// ═══════════════════════════════════════════════════════════════════════════
 namespace il2cpp_api {
 
 struct FunctionTable {
@@ -588,7 +542,6 @@ static void populateFunctionTable(uintptr_t base) {
 
 } // namespace il2cpp_api
 
-// ── Method / field / property dump helpers (unchanged logic) ──────────────
 static std::string buildMethodModifier(uint32_t flags) {
     std::stringstream out;
     switch (flags & METHOD_ATTRIBUTE_MEMBER_ACCESS_MASK) {
@@ -837,7 +790,6 @@ static std::string dumpTypeToString(const Il2CppType* type, int depth) {
     return out.str();
 }
 
-// ── Output writers ─────────────────────────────────────────────────────────
 namespace output {
 
 static bool ensureDirectory(const char* dir) {
@@ -920,8 +872,6 @@ static void writeFridaScript(const char* dir,
 
 } // namespace output
 
-// ── API initialisation  ──────────────────────────────────────────────────
-// FIX [3]: sleep_for tamamen kaldırıldı; eventfd + poll ile async bekleme
 static void runApiInit(uintptr_t base) {
     il2cpp_api::g_il2cpp_base = static_cast<uint64_t>(base);
     LOGI("il2cpp base: 0x%" PRIx64, il2cpp_api::g_il2cpp_base);
@@ -929,13 +879,12 @@ static void runApiInit(uintptr_t base) {
     auto& api = il2cpp_api::g_api;
     if (!api.domain_get_assemblies) { LOGE("il2cpp api init failed"); return; }
 
-    // VM hazır olana kadar eventfd ile bekleme (sleep() yok)
-    constexpr int kMaxPollMs  = 30000; // 30s toplam
-    constexpr int kSliceMs    = 200;   // 200ms aralıklar
+    constexpr int kMaxPollMs = 30000;
+    constexpr int kSliceMs   = 200;
     int efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     for (int waited = 0; waited < kMaxPollMs; waited += kSliceMs) {
         if (api.is_vm_thread && api.is_vm_thread(nullptr)) break;
-        if (!api.is_vm_thread) break; // API yok, devam et
+        if (!api.is_vm_thread) break;
         if (efd >= 0) {
             struct pollfd pf = { efd, POLLIN, 0 };
             poll(&pf, 1, kSliceMs);
@@ -1017,7 +966,6 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
             }
         }
     } else {
-        // Reflection fallback path
         if (!api.get_corlib || !api.class_from_name || !api.class_get_method_from_name ||
             !api.string_new || !api.class_get_type)
         { LOGE("reflection path: api missing"); return; }
@@ -1078,11 +1026,6 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
     LOGI("Dump complete: %zu classes -> %s", type_outputs.size(), dir);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  hackStart  —  FIX [3]: Tüm sleep() çağrıları kaldırıldı
-//  libil2cpp.so bekleme artık eventfd + poll ile yapılıyor.
-//  Exponential backoff mantığı korundu ama sleep yerine poll kullanılıyor.
-// ═══════════════════════════════════════════════════════════════════════════
 namespace {
 
 constexpr int     kMaxRetries  = 10;
@@ -1095,14 +1038,11 @@ constexpr int64_t kMaxDelayMs  = 16000;
     return d < kMaxDelayMs ? d : kMaxDelayMs;
 }
 
-// sleep() yerine: eventfd'ye poll() uygula; timeout dolunca devam et.
-// Bu thread'in davranışı zamanlayıcı listelerinde anomali olarak görünmez.
 static void stealthWait(int64_t ms) {
     if (ms <= 0) return;
     int efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (efd < 0) return;
     struct pollfd pf = { efd, POLLIN, 0 };
-    // Birden fazla kısa dilim: uzun tek poll() de syslog'a düşebilir
     constexpr int64_t kSlice = 250;
     for (int64_t rem = ms; rem > 0; rem -= kSlice)
         poll(&pf, 1, static_cast<int>(rem < kSlice ? rem : kSlice));
@@ -1133,7 +1073,7 @@ static void hackStart(
         }
         auto delay = exponentialDelay(attempt);
         LOGI("libil2cpp.so not ready attempt=%d delay=%" PRId64 "ms", attempt, delay);
-        stealthWait(delay); // ← sleep_for yerine görünmez bekleyici
+        stealthWait(delay);
     }
     LOGE("libil2cpp.so not found after %d retries tid=%d", kMaxRetries, gettid());
 }
@@ -1155,11 +1095,6 @@ static void hackPrepare(
 
 } // anonymous namespace
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  EaquelDumperModule  —  ReZygisk module entry point
-//  Hot-reload: ConfigWatcher burada başlatılır; JSON değiştiğinde
-//              aktif config anında güncellenir, yeniden başlatma gerekmez.
-// ═══════════════════════════════════════════════════════════════════════════
 class EaquelDumperModule : public rezygisk::ModuleBase {
 public:
     void onLoad(rezygisk::Api* api, JNIEnv* env) override {
@@ -1184,11 +1119,19 @@ public:
 
     void postAppSpecialize(const rezygisk::AppSpecializeArgs*) override {
         if (!enable_hack) return;
+
+        installSigsegvHandler();
+
+        if (active_cfg.Protected_Breaker) {
+            installDlopenHook(out_dir, active_cfg);
+        }
+
         if (s_orig_dlopen && s_orig_dlopen != dlopen) {
             LOGI("postAppSpecialize: early hook active");
-            startConfigWatcher(); // config watcher sadece hedef süreçte
+            startConfigWatcher();
             return;
         }
+
         startConfigWatcher();
         std::thread([g = std::move(game_dir), o = std::move(out_dir),
                      c = active_cfg]() mutable {
@@ -1203,12 +1146,12 @@ private:
     std::string    game_dir, out_dir;
     config::DumperConfig      active_cfg;
     config::ConfigWatcher     watcher_;
+    std::mutex                cfg_mutex_;
 
     void startConfigWatcher() {
         watcher_.start([this](const config::DumperConfig& new_cfg) {
-            // Hot-reload: yeni config'i atomik olarak güncelle
             std::lock_guard<std::mutex> lk(cfg_mutex_);
-            active_cfg = new_cfg;
+            active_cfg  = new_cfg;
             s_early_cfg = new_cfg;
             LOGI("hot-reload: config updated Target_Game=%s Cpp_Header=%d Frida=%d",
                  new_cfg.Target_Game.c_str(),
@@ -1217,10 +1160,7 @@ private:
         });
     }
 
-    std::mutex cfg_mutex_;
-
     void preSpecialize(const char* pkg, const char* app_data_dir) {
-        installSigsegvHandler();
         active_cfg = config::loadConfig();
 
         LOGI("preSpecialize: nice_name=%s  app_data_dir=%s  Target_Game=%s",
@@ -1255,15 +1195,11 @@ private:
                       ? std::string(config::kFallbackOutput)
                       : active_cfg.Output;
         LOGI("output dir: %s", out_dir.c_str());
-        if (active_cfg.Protected_Breaker)
-            installDlopenHook(out_dir, active_cfg);
     }
 };
 
-// ── ReZygisk module registration ─────────────────────────────────────────
 REGISTER_REZYGISK_MODULE(EaquelDumperModule)
 
-// ── JNI_OnLoad (standalone / sideload path) ───────────────────────────────
 #if defined(__arm__) || defined(__aarch64__)
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     if (!vm) return JNI_ERR;

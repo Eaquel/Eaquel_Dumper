@@ -14,6 +14,13 @@ set(CMAKE_CXX_STANDARD          23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS        OFF)
 
+if(NOT DEFINED ANDROID_PLATFORM OR ANDROID_PLATFORM LESS 30)
+    message(FATAL_ERROR "Minimum supported Android API is 30 (Android 11). Got: ${ANDROID_PLATFORM}")
+endif()
+if(ANDROID_PLATFORM GREATER 36)
+    message(WARNING "Android API ${ANDROID_PLATFORM} exceeds tested maximum (36 / Android 16)")
+endif()
+
 if(CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
     set(EAQUEL_ARCH "arm64")
 elseif(CMAKE_ANDROID_ARCH_ABI STREQUAL "armeabi-v7a")
@@ -33,6 +40,8 @@ set(EAQUEL_C_FLAGS
     -D_FORTIFY_SOURCE=2
     -DEAQUEL_VERSION_MAJOR=2
     -DEAQUEL_VERSION_MINOR=0
+    -DANDROID_MIN_API=30
+    -DANDROID_MAX_API=36
 )
 
 set(EAQUEL_CXX_FLAGS
@@ -91,7 +100,6 @@ string(APPEND CMAKE_MODULE_LINKER_FLAGS " ${_ld_str}")
 
 add_library(${MODULE_NAME} SHARED
     Dumper.cpp
-    # ReZygisk.hpp and Core.hpp are header-only; listed for IDE visibility
 )
 
 target_include_directories(${MODULE_NAME}
@@ -126,9 +134,4 @@ message(STATUS "[Eaquel v2] Target      : ${MODULE_NAME}")
 message(STATUS "[Eaquel v2] Arch        : ${EAQUEL_ARCH}")
 message(STATUS "[Eaquel v2] Build       : ${CMAKE_BUILD_TYPE}")
 message(STATUS "[Eaquel v2] CXX         : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
-message(STATUS "[Eaquel v2] Architecture: ReZygisk (Zygisk replaced)")
-message(STATUS "[Eaquel v2] Hook Engine : Stealth RW-only (no RWX pages)")
-message(STATUS "[Eaquel v2] Scanner     : Adaptive (strict+fuzzy+hash-lattice)")
-message(STATUS "[Eaquel v2] Async Wait  : inotify+eventfd (no sleep)")
-message(STATUS "[Eaquel v2] Config      : Hot-reload via inotify")
-message(STATUS "[Eaquel v2] Deps        : NONE (custom inline-hook + GOT-patch engine)")
+message(STATUS "[Eaquel v2] Android API : ${ANDROID_PLATFORM} (supported range 30-36)")
