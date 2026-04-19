@@ -778,8 +778,8 @@ struct DumperConfig {
     DumperConfig cfg;
     cfg.Output   = std::string(kFallbackOutput);
     cfg.is_64bit = (sizeof(void*) == 8);
-    if (auto v = extractJsonString(json, "Target_Game"); v && !v->empty()) cfg.Target_Game = *v;
-    if (auto v = extractJsonString(json, "Output");      v && !v->empty()) cfg.Output      = *v;
+    if (auto v = extractJsonString(json, "Target_Game"); v) cfg.Target_Game = *v;
+    if (auto v = extractJsonString(json, "Output"); v && !v->empty()) cfg.Output = *v;
     cfg.Cpp_Header        = extractJsonBool(json, "Cpp_Header",        true);
     cfg.Frida_Script      = extractJsonBool(json, "Frida_Script",      true);
     cfg.include_generic   = extractJsonBool(json, "include_generic",   true);
@@ -809,14 +809,16 @@ struct DumperConfig {
 }
 
 [[nodiscard]] static bool isTargetPackage(const DumperConfig& cfg, std::string_view pkg) {
+    if (cfg.Target_Game == "!")
+        return true;
     return !cfg.Target_Game.empty() && cfg.Target_Game == pkg;
 }
 
+using HotReloadCallback = std::function<void(const DumperConfig&)>;
+
 class ConfigWatcher {
 public:
-    using Callback = std::function<void(const DumperConfig&)>;
-
-    bool start(Callback cb) {
+    bool start(HotReloadCallback cb) {
         cb_  = std::move(cb);
         ifd_ = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
         if (ifd_ < 0) { LOGE("inotify_init1 failed errno=%d", errno); return false; }
@@ -826,12 +828,22 @@ public:
         const std::string_view paths[] = {
             kConfigPathPrimary, kConfigPathModule, kConfigPathKsu
         };
+        bool any_watch = false;
         for (auto p : paths) {
             std::string dir(p);
             auto slash = dir.rfind('/');
             if (slash != std::string::npos) dir.resize(slash);
-            inotify_add_watch(ifd_, dir.c_str(),
+            int wd = inotify_add_watch(ifd_, dir.c_str(),
                               IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE);
+            if (wd >= 0) {
+                any_watch = true;
+                LOGI("inotify: watching %s (wd=%d)", dir.c_str(), wd);
+            } else {
+                LOGW("inotify: watch failed for %s errno=%d", dir.c_str(), errno);
+            }
+        }
+        if (!any_watch) {
+            LOGW("inotify: no directories watchable — hot-reload disabled");
         }
 
         running_.store(true, std::memory_order_release);
@@ -850,7 +862,7 @@ public:
     ~ConfigWatcher() { stop(); }
 
 private:
-    Callback          cb_;
+    HotReloadCallback cb_;
     int               ifd_    = -1;
     int               efd_    = -1;
     std::atomic<bool> running_{false};
@@ -863,8 +875,6 @@ private:
         struct pollfd fds[2];
         fds[0] = { ifd_, POLLIN, 0 };
         fds[1] = { efd_, POLLIN, 0 };
-
-        const char* kFileNames[] = { "Eaquel_Config.json", nullptr };
 
         while (running_.load(std::memory_order_acquire)) {
             int ret = poll(fds, 2, -1);
@@ -879,22 +889,16 @@ private:
                 auto* ev = reinterpret_cast<inotify_event*>(ptr);
                 ptr += sizeof(inotify_event) + ev->len;
                 if (ev->len == 0) { reload = true; continue; }
-                for (int i = 0; kFileNames[i]; ++i) {
-                    if (strcmp(ev->name, kFileNames[i]) == 0) {
-                        reload = true; break;
-                    }
+                if (strcmp(ev->name, "Eaquel_Config.json") == 0) {
+                    reload = true;
                 }
             }
             if (reload) {
-                int settle_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-                if (settle_fd >= 0) {
-                    struct pollfd pf = { settle_fd, POLLIN, 0 };
-                    poll(&pf, 1, 80);
-                    ::close(settle_fd);
-                }
+                struct pollfd settle_pf = { ifd_, POLLIN, 0 };
+                poll(&settle_pf, 1, 80);
                 auto cfg = loadConfig();
-                LOGI("config: hot-reload triggered — Target_Game=%s Protected_Breaker=%d",
-                     cfg.Target_Game.c_str(), (int)cfg.Protected_Breaker);
+                LOGI("config: hot-reload triggered — Target_Game=%s Protected_Breaker=%d Output=%s",
+                     cfg.Target_Game.c_str(), (int)cfg.Protected_Breaker, cfg.Output.c_str());
                 if (cb_) cb_(cfg);
             }
         }

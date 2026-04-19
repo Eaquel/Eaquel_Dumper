@@ -36,11 +36,12 @@ static inline const char* safeStr(const char* s, const char* fallback = "") {
 }
 
 static void runApiInit(uintptr_t base);
-static void runDump(const char* out_dir, const config::DumperConfig& cfg);
+static void runDump(const std::string& out_dir, const config::DumperConfig& cfg);
 
 static std::string          s_early_out_dir;
 static config::DumperConfig s_early_cfg;
 static std::atomic<bool>    s_early_hook_fired{false};
+static std::mutex           s_early_cfg_mutex;
 
 namespace hook_engine {
 
@@ -298,7 +299,10 @@ static void* hooked_MetadataLoad(const char* path, size_t* out_size) {
 }
 
 static bool install(uintptr_t lib_base, const std::string& dump_dir) {
-    s_dump_dir = dump_dir;
+    {
+        std::lock_guard<std::mutex> lk(s_mutex);
+        s_dump_dir = dump_dir;
+    }
     auto syms  = scanner::scanAllSymbols(lib_base);
     uintptr_t loader_addr = 0;
 #if defined(__aarch64__)
@@ -317,6 +321,13 @@ static bool install(uintptr_t lib_base, const std::string& dump_dir) {
     return ok;
 }
 
+static void resetForReload(const std::string& new_dump_dir) {
+    std::lock_guard<std::mutex> lk(s_mutex);
+    s_dump_dir = new_dump_dir;
+    s_fired.store(false, std::memory_order_release);
+    LOGI("[MetaHook] reset for hot-reload dump_dir=%s", new_dump_dir.c_str());
+}
+
 } // namespace metadata_hook
 
 static void* (*s_orig_dlopen)(const char*, int) = nullptr;
@@ -327,8 +338,13 @@ static void* hooked_dlopen(const char* path, int flags) {
         bool expected = false;
         if (s_early_hook_fired.compare_exchange_strong(expected, true)) {
             LOGI("EARLY HOOK: libil2cpp.so loaded path=%s", path);
-            std::string out = s_early_out_dir;
-            config::DumperConfig cfg = s_early_cfg;
+            std::string out;
+            config::DumperConfig cfg;
+            {
+                std::lock_guard<std::mutex> lk(s_early_cfg_mutex);
+                out = s_early_out_dir;
+                cfg = s_early_cfg;
+            }
             std::thread([out = std::move(out), cfg = std::move(cfg), handle]() mutable {
                 int efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
                 if (efd >= 0) {
@@ -346,7 +362,7 @@ static void* hooked_dlopen(const char* path, int flags) {
                         metadata_hook::install(base, out);
                     runApiInit(base);
                 }
-                runDump(out.c_str(), cfg);
+                runDump(out, cfg);
             }).detach();
         }
     }
@@ -354,8 +370,11 @@ static void* hooked_dlopen(const char* path, int flags) {
 }
 
 static bool installDlopenHook(const std::string& out_dir, const config::DumperConfig& cfg) {
-    s_early_out_dir = out_dir;
-    s_early_cfg     = cfg;
+    {
+        std::lock_guard<std::mutex> lk(s_early_cfg_mutex);
+        s_early_out_dir = out_dir;
+        s_early_cfg     = cfg;
+    }
     s_early_hook_fired.store(false);
     if (hook_engine::installInlineHook(
             reinterpret_cast<void*>(dlopen),
@@ -899,19 +918,22 @@ static void runApiInit(uintptr_t base) {
     }
 }
 
-static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
+static void runDump(const std::string& out_dir_str, const config::DumperConfig& cfg) {
     auto& api = il2cpp_api::g_api;
     if (!api.domain_get || !api.domain_get_assemblies) {
         LOGE("runDump: api not initialised"); return;
     }
+    const char* out_dir = out_dir_str.c_str();
     LOGI("dump started -> %s", out_dir);
 
-    std::string effective_dir = out_dir;
+    std::string effective_dir = out_dir_str;
     auto tryDir = [&](const std::string& d) -> bool {
         if (output::ensureDirectory(d.c_str())) { effective_dir = d; return true; }
         return false;
     };
-    if (!tryDir(out_dir)) {
+
+    std::string cfg_out = cfg.Output.empty() ? std::string(config::kFallbackOutput) : cfg.Output;
+    if (!tryDir(cfg_out)) {
         if (!tryDir(std::string(config::kFallbackOutput))) {
             if (!tryDir(std::string(config::kFallbackOutputMod))) {
                 if (!tryDir(std::string(config::kFallbackOutputKsu))) {
@@ -1050,10 +1072,11 @@ static void stealthWait(int64_t ms) {
 }
 
 static void hackStart(
-    const std::string& /*game_dir*/,
+    const std::string& game_dir,
     const std::string& out_dir,
     const config::DumperConfig& cfg
 ) {
+    (void)game_dir;
     for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
         uintptr_t base = scanner::findLibBase("libil2cpp.so");
         if (!base) {
@@ -1068,7 +1091,7 @@ static void hackStart(
             if (cfg.Protected_Breaker && !metadata_hook::s_fired.load())
                 metadata_hook::install(base, out_dir);
             runApiInit(base);
-            runDump(out_dir.c_str(), cfg);
+            runDump(out_dir, cfg);
             return;
         }
         auto delay = exponentialDelay(attempt);
@@ -1126,15 +1149,21 @@ public:
             installDlopenHook(out_dir, active_cfg);
         }
 
+        startConfigWatcher();
+
         if (s_orig_dlopen && s_orig_dlopen != dlopen) {
-            LOGI("postAppSpecialize: early hook active");
-            startConfigWatcher();
+            LOGI("postAppSpecialize: early hook active, watcher started");
             return;
         }
 
-        startConfigWatcher();
-        std::thread([g = std::move(game_dir), o = std::move(out_dir),
-                     c = active_cfg]() mutable {
+        std::string g = game_dir;
+        std::string o = out_dir;
+        config::DumperConfig c;
+        {
+            std::lock_guard<std::mutex> lk(cfg_mutex_);
+            c = active_cfg;
+        }
+        std::thread([g = std::move(g), o = std::move(o), c = std::move(c)]() mutable {
             hackPrepare(g, o, c);
         }).detach();
     }
@@ -1147,16 +1176,67 @@ private:
     config::DumperConfig      active_cfg;
     config::ConfigWatcher     watcher_;
     std::mutex                cfg_mutex_;
+    std::atomic<bool>         dump_running_{false};
+
+    void triggerReDump(const config::DumperConfig& new_cfg) {
+        bool expected = false;
+        if (!dump_running_.compare_exchange_strong(expected, true)) {
+            LOGI("hot-reload: dump already running, skipping re-trigger");
+            return;
+        }
+
+        std::string new_out = new_cfg.Output.empty()
+                              ? std::string(config::kFallbackOutput)
+                              : new_cfg.Output;
+
+        if (new_cfg.Protected_Breaker) {
+            metadata_hook::resetForReload(new_out);
+        }
+
+        uintptr_t base = scanner::findLibBase("libil2cpp.so");
+        if (!base) {
+            LOGW("hot-reload: libil2cpp.so not in memory yet, spawning hackStart");
+            std::string g = game_dir;
+            config::DumperConfig c = new_cfg;
+            std::thread([g = std::move(g), o = new_out, c = std::move(c),
+                         this]() mutable {
+                hackPrepare(g, o, c);
+                dump_running_.store(false, std::memory_order_release);
+            }).detach();
+            return;
+        }
+
+        config::DumperConfig c = new_cfg;
+        std::thread([base, o = new_out, c = std::move(c), this]() mutable {
+            runApiInit(base);
+            runDump(o, c);
+            dump_running_.store(false, std::memory_order_release);
+        }).detach();
+    }
 
     void startConfigWatcher() {
         watcher_.start([this](const config::DumperConfig& new_cfg) {
-            std::lock_guard<std::mutex> lk(cfg_mutex_);
-            active_cfg  = new_cfg;
-            s_early_cfg = new_cfg;
-            LOGI("hot-reload: config updated Target_Game=%s Cpp_Header=%d Frida=%d",
+            {
+                std::lock_guard<std::mutex> lk(cfg_mutex_);
+                active_cfg  = new_cfg;
+                s_early_cfg = new_cfg;
+            }
+            LOGI("hot-reload: config updated Target_Game=%s Cpp_Header=%d Frida=%d Output=%s",
                  new_cfg.Target_Game.c_str(),
                  (int)new_cfg.Cpp_Header,
-                 (int)new_cfg.Frida_Script);
+                 (int)new_cfg.Frida_Script,
+                 new_cfg.Output.c_str());
+
+            if (enable_hack) {
+                {
+                    std::lock_guard<std::mutex> lk(s_early_cfg_mutex);
+                    s_early_out_dir = new_cfg.Output.empty()
+                                      ? std::string(config::kFallbackOutput)
+                                      : new_cfg.Output;
+                    s_early_cfg = new_cfg;
+                }
+                triggerReDump(new_cfg);
+            }
         });
     }
 
@@ -1169,16 +1249,16 @@ private:
              active_cfg.Target_Game.c_str());
 
         bool is_target = false;
-        if (pkg && !active_cfg.Target_Game.empty() && active_cfg.Target_Game == pkg)
+
+        if (active_cfg.Target_Game == "!") {
             is_target = true;
-        else if (app_data_dir && !active_cfg.Target_Game.empty() &&
-                 strstr(app_data_dir, active_cfg.Target_Game.c_str()) != nullptr) {
+            LOGI("Target_Game=! -> wildcard match for %s", pkg ? pkg : "?");
+        } else if (pkg && !active_cfg.Target_Game.empty() && active_cfg.Target_Game == pkg) {
+            is_target = true;
+        } else if (app_data_dir && !active_cfg.Target_Game.empty() &&
+                   strstr(app_data_dir, active_cfg.Target_Game.c_str()) != nullptr) {
             is_target = true;
             LOGI("Target detected via app_data_dir");
-        } else if (app_data_dir && strstr(app_data_dir, "!") != nullptr &&
-                   (active_cfg.Target_Game.empty() || active_cfg.Target_Game == "!")) {
-            is_target = true;
-            LOGI("Target detected via app_data_dir (hardened fallback)");
         }
 
         if (!is_target) {
@@ -1204,13 +1284,25 @@ REGISTER_REZYGISK_MODULE(EaquelDumperModule)
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     if (!vm) return JNI_ERR;
     installSigsegvHandler();
-    std::string combined(reserved ? static_cast<const char*>(reserved) : "");
-    auto sep  = combined.find('|');
-    auto game = (sep != std::string::npos) ? combined.substr(0, sep) : combined;
-    auto out  = (sep != std::string::npos) ? combined.substr(sep + 1) : std::string(config::kFallbackOutput);
     config::DumperConfig cfg = config::loadConfig();
+    std::string out = cfg.Output.empty() ? std::string(config::kFallbackOutput) : cfg.Output;
+    std::string game;
+    if (reserved) {
+        std::string combined(static_cast<const char*>(reserved));
+        auto sep = combined.find('|');
+        if (sep != std::string::npos) {
+            game = combined.substr(0, sep);
+            std::string explicit_out = combined.substr(sep + 1);
+            if (!explicit_out.empty()) out = explicit_out;
+        } else {
+            game = combined;
+        }
+    }
     if (cfg.Output.empty()) cfg.Output = out;
-    std::thread([g = std::move(game), o = cfg.Output, c = std::move(cfg)]() mutable {
+    std::string o = out;
+    std::string g = game;
+    config::DumperConfig c = cfg;
+    std::thread([g = std::move(g), o = std::move(o), c = std::move(c)]() mutable {
         hackStart(g, o, c);
     }).detach();
     return JNI_VERSION_1_6;

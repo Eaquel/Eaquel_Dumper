@@ -1,5 +1,5 @@
 {
-  "Target_Game": "",
+  "Target_Game": "!",
   "Output": "/sdcard/Eaquel_Dumps",
   "Cpp_Header": true,
   "Frida_Script": true,
