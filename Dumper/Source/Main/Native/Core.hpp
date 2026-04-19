@@ -22,6 +22,12 @@
 #include <ranges>
 #include <concepts>
 #include <expected>
+#include <format>
+#include <print>
+#include <flat_map>
+#include <flat_set>
+#include <mdspan>
+#include <generator>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/inotify.h>
@@ -369,17 +375,15 @@ inline constexpr std::string_view kSystemPackages[] = {
 };
 
 [[nodiscard]] static bool isSystemProcess(std::string_view pkg) noexcept {
-    for (auto& prefix : kSystemPrefixes) {
-        if (pkg.starts_with(prefix)) return true;
-    }
-    return false;
+    return std::ranges::any_of(kSystemPrefixes, [&](std::string_view p) {
+        return pkg.starts_with(p);
+    });
 }
 
 [[nodiscard]] static bool isSystemPackage(std::string_view pkg) noexcept {
-    for (auto& sp : kSystemPackages) {
-        if (pkg == sp) return true;
-    }
-    return false;
+    return std::ranges::any_of(kSystemPackages, [&](std::string_view sp) {
+        return pkg == sp;
+    });
 }
 
 [[nodiscard]] static bool isThirdPartyApp(std::string_view pkg) noexcept {
@@ -393,9 +397,9 @@ inline constexpr std::string_view kSystemPackages[] = {
 
 namespace entropy {
 
-inline constexpr uint32_t kIl2CppMetadataMagic = 0xFAB11BAF;
+inline constexpr uint32_t kIl2CppMetadataMagic = 0xFAB11BAFu;
 
-enum class MetadataState { Valid, Encrypted, Unknown };
+enum class MetadataState : uint8_t { Valid, Encrypted, Unknown };
 
 struct XorKeyResult {
     std::vector<uint8_t> key;
@@ -407,9 +411,8 @@ struct XorKeyResult {
 [[nodiscard]] static MetadataState analyzeBuffer(const uint8_t* buf, size_t sz) noexcept {
     if (!buf || sz < 4) return MetadataState::Unknown;
     uint32_t magic = 0;
-    memcpy(&magic, buf, 4);
-    if (magic == kIl2CppMetadataMagic) return MetadataState::Valid;
-    return MetadataState::Encrypted;
+    __builtin_memcpy(&magic, buf, 4);
+    return (magic == kIl2CppMetadataMagic) ? MetadataState::Valid : MetadataState::Encrypted;
 }
 
 [[nodiscard]] static XorKeyResult discoverXorKey(const uint8_t* buf, size_t sz) {
@@ -420,25 +423,27 @@ struct XorKeyResult {
         if (sz < key_len * 4) continue;
         std::vector<uint8_t> candidate(key_len);
         uint32_t target = kIl2CppMetadataMagic;
+
         for (size_t i = 0; i < 4 && i < key_len; ++i)
-            candidate[i] = buf[i] ^ ((target >> (i * 8)) & 0xFFu);
-        for (size_t i = key_len; i < std::min(sz, key_len * 4); ++i)
-            if ((buf[i] ^ candidate[i % key_len]) != 0x00)
-                goto next_key_len;
-        {
-            int score = 0;
-            for (size_t j = 4; j < std::min(sz, size_t(256)); ++j) {
-                uint8_t decoded = buf[j] ^ candidate[j % key_len];
-                if (decoded >= 0x20 && decoded <= 0x7E) ++score;
-            }
-            if (score > result.score) {
-                result.key     = candidate;
-                result.key_len = key_len;
-                result.score   = score;
-                result.found   = true;
-            }
+            candidate[i] = buf[i] ^ static_cast<uint8_t>((target >> (i * 8)) & 0xFFu);
+
+        bool valid = true;
+        for (size_t i = key_len; i < std::min(sz, key_len * 4); ++i) {
+            if ((buf[i] ^ candidate[i % key_len]) != 0x00) { valid = false; break; }
         }
-        next_key_len:;
+        if (!valid) continue;
+
+        int score = 0;
+        for (size_t j = 4; j < std::min(sz, size_t(256)); ++j) {
+            uint8_t decoded = buf[j] ^ candidate[j % key_len];
+            if (decoded >= 0x20 && decoded <= 0x7E) ++score;
+        }
+        if (score > result.score) {
+            result.key     = candidate;
+            result.key_len = key_len;
+            result.score   = score;
+            result.found   = true;
+        }
     }
     return result;
 }
@@ -457,36 +462,36 @@ struct XorKeyResult {
 namespace scanner {
 
 struct MemoryRegion {
-    uintptr_t base;
-    size_t    size;
+    uintptr_t base = 0;
+    size_t    size = 0;
 };
 
 struct ResolvedSymbols {
-    uintptr_t domain_get               = 0;
-    uintptr_t domain_get_assemblies    = 0;
-    uintptr_t image_get_class          = 0;
-    uintptr_t thread_attach            = 0;
-    uintptr_t is_vm_thread             = 0;
-    uintptr_t domain_get_2026          = 0;
-    uintptr_t domain_get_assemblies_2024 = 0;
-    uintptr_t image_get_class_2026     = 0;
-    uintptr_t metadata_loader          = 0;
-    uintptr_t metadata_cache_initialize= 0;
-    uintptr_t metadata_decrypt         = 0;
-    uintptr_t il2cpp_init_2026         = 0;
+    uintptr_t domain_get                  = 0;
+    uintptr_t domain_get_assemblies       = 0;
+    uintptr_t image_get_class             = 0;
+    uintptr_t thread_attach               = 0;
+    uintptr_t is_vm_thread                = 0;
+    uintptr_t domain_get_2026             = 0;
+    uintptr_t domain_get_assemblies_2024  = 0;
+    uintptr_t image_get_class_2026        = 0;
+    uintptr_t metadata_loader             = 0;
+    uintptr_t metadata_cache_initialize   = 0;
+    uintptr_t metadata_decrypt            = 0;
+    uintptr_t il2cpp_init_2026            = 0;
 #if defined(__arm__)
-    uintptr_t arm32_metadata_loader    = 0;
-    uintptr_t arm32_metadata_cache_init= 0;
-    uintptr_t arm32_domain_get         = 0;
+    uintptr_t arm32_metadata_loader       = 0;
+    uintptr_t arm32_metadata_cache_init   = 0;
+    uintptr_t arm32_domain_get            = 0;
     uintptr_t arm32_domain_get_assemblies = 0;
-    uintptr_t arm32_image_get_class    = 0;
-    uintptr_t arm32_thread_attach      = 0;
+    uintptr_t arm32_image_get_class       = 0;
+    uintptr_t arm32_thread_attach         = 0;
 #endif
 };
 
 namespace known_hashes {
-    inline constexpr std::array<uint32_t, 4> kDomainGet64     = {0xA1B2C3D4, 0xE5F60718, 0x293A4B5C, 0x6D7E8F90};
-    inline constexpr std::array<uint32_t, 4> kMetadataLoader64= {0x11223344, 0x55667788, 0x99AABBCC, 0xDDEEFF00};
+    inline constexpr std::array<uint32_t, 4> kDomainGet64      = {0xA1B2C3D4u, 0xE5F60718u, 0x293A4B5Cu, 0x6D7E8F90u};
+    inline constexpr std::array<uint32_t, 4> kMetadataLoader64 = {0x11223344u, 0x55667788u, 0x99AABBCCu, 0xDDEEFF00u};
 }
 
 namespace arm64_prologue {
@@ -517,11 +522,11 @@ namespace arm32_prologue {
 
 template<size_t N>
 [[nodiscard]] static std::optional<uintptr_t> scanPattern(
-    const MemoryRegion& region, const std::array<uint8_t, N>& pattern, size_t align = 4)
+    const MemoryRegion& region, const std::array<uint8_t, N>& pattern, size_t align = 4) noexcept
 {
     const auto* base = reinterpret_cast<const uint8_t*>(region.base);
     for (size_t i = 0; i + N <= region.size; i += align) {
-        if (memcmp(base + i, pattern.data(), N) == 0)
+        if (__builtin_memcmp(base + i, pattern.data(), N) == 0)
             return region.base + i;
     }
     return std::nullopt;
@@ -529,22 +534,22 @@ template<size_t N>
 
 template<size_t N>
 [[nodiscard]] static std::optional<uintptr_t> scanPatternFuzzy(
-    const MemoryRegion& region, const std::array<uint8_t, N>& pattern, size_t align = 4)
+    const MemoryRegion& region, const std::array<uint8_t, N>& pattern, size_t align = 4) noexcept
 {
     const auto* base = reinterpret_cast<const uint8_t*>(region.base);
     constexpr size_t half = N / 2;
     for (size_t i = 0; i + N <= region.size; i += align) {
-        if (memcmp(base + i, pattern.data(), half) == 0)
+        if (__builtin_memcmp(base + i, pattern.data(), half) == 0)
             return region.base + i;
     }
     return std::nullopt;
 }
 
 [[nodiscard]] static std::optional<uintptr_t> scanByHashLattice(
-    const MemoryRegion& region, const std::vector<uint32_t>& hashes)
+    const MemoryRegion& region, std::span<const uint32_t> hashes) noexcept
 {
-    const auto* base = reinterpret_cast<const uint32_t*>(region.base);
-    size_t count = region.size / sizeof(uint32_t);
+    const auto* base  = reinterpret_cast<const uint32_t*>(region.base);
+    size_t      count = region.size / sizeof(uint32_t);
     for (size_t i = 0; i < count; ++i) {
         for (auto h : hashes) {
             if (base[i] == h) return region.base + i * sizeof(uint32_t);
@@ -553,7 +558,7 @@ template<size_t N>
     return std::nullopt;
 }
 
-[[nodiscard]] static std::optional<MemoryRegion> resolveExecutableRegion(uintptr_t lib_base) {
+[[nodiscard]] static std::optional<MemoryRegion> resolveExecutableRegion(uintptr_t lib_base) noexcept {
     FILE* maps = fopen("/proc/self/maps", "r");
     if (!maps) return std::nullopt;
 
@@ -588,36 +593,24 @@ template<size_t N>
     }
     ResolvedSymbols s;
 
-    auto adaptive_scan = [&](auto& field,
-                              const auto& pat,
-                              const std::vector<uint32_t>& hashes,
-                              const char* name) {
-        if (field) return;
-        if (auto a = scanPattern(*region, pat)) {
-            field = *a;
-            LOGI("scanner[strict]: %s -> 0x%" PRIxPTR, name, field);
-            return;
-        }
-        if (auto a = scanPatternFuzzy(*region, pat)) {
-            field = *a;
-            LOGI("scanner[fuzzy]: %s -> 0x%" PRIxPTR, name, field);
-            return;
-        }
-        if (!hashes.empty()) {
-            if (auto a = scanByHashLattice(*region, hashes)) {
-                field = *a;
-                LOGI("scanner[hash]: %s -> 0x%" PRIxPTR, name, field);
-                return;
-            }
-        }
-        LOGW("scanner: %s not found (all strategies exhausted)", name);
-    };
-
     static const std::vector<uint32_t> dg_hashes(
         known_hashes::kDomainGet64.begin(), known_hashes::kDomainGet64.end());
     static const std::vector<uint32_t> ml_hashes(
         known_hashes::kMetadataLoader64.begin(), known_hashes::kMetadataLoader64.end());
     static const std::vector<uint32_t> no_hashes;
+
+    auto adaptive_scan = [&](auto& field,
+                              const auto& pat,
+                              const std::vector<uint32_t>& hashes,
+                              const char* name) {
+        if (field) return;
+        if (auto a = scanPattern(*region, pat))      { field = *a; LOGI("scanner[strict]: %s -> 0x%" PRIxPTR, name, field); return; }
+        if (auto a = scanPatternFuzzy(*region, pat)) { field = *a; LOGI("scanner[fuzzy]: %s -> 0x%" PRIxPTR, name, field);  return; }
+        if (!hashes.empty()) {
+            if (auto a = scanByHashLattice(*region, hashes)) { field = *a; LOGI("scanner[hash]: %s -> 0x%" PRIxPTR, name, field); return; }
+        }
+        LOGW("scanner: %s not found (all strategies exhausted)", name);
+    };
 
     adaptive_scan(s.domain_get,               arm64_prologue::kDomainGet,               dg_hashes, "il2cpp_domain_get");
     adaptive_scan(s.domain_get_assemblies,     arm64_prologue::kDomainGetAssemblies,     no_hashes, "il2cpp_domain_get_assemblies");
@@ -636,16 +629,8 @@ template<size_t N>
 #if defined(__arm__)
     auto scan32 = [&](auto& field, const auto& pat, const char* name) {
         if (field) return;
-        if (auto a = scanPattern(*region, pat, 2)) {
-            field = *a | 1u;
-            LOGI("scanner[arm32/strict]: %s -> 0x%" PRIxPTR, name, field);
-            return;
-        }
-        if (auto a = scanPatternFuzzy(*region, pat, 2)) {
-            field = *a | 1u;
-            LOGI("scanner[arm32/fuzzy]: %s -> 0x%" PRIxPTR, name, field);
-            return;
-        }
+        if (auto a = scanPattern(*region, pat, 2))      { field = *a | 1u; LOGI("scanner[arm32/strict]: %s -> 0x%" PRIxPTR, name, field); return; }
+        if (auto a = scanPatternFuzzy(*region, pat, 2)) { field = *a | 1u; LOGI("scanner[arm32/fuzzy]: %s -> 0x%" PRIxPTR, name, field);  return; }
         LOGW("scanner[arm32]: %s not found", name);
     };
     scan32(s.arm32_metadata_loader,       arm32_prologue::kMetadataLoader32,          "metadata_loader[arm32]");
@@ -666,7 +651,7 @@ static int dl_iterate_phdr_callback(struct dl_phdr_info* info, size_t, void* dat
     return 0;
 }
 
-[[nodiscard]] static uintptr_t findLibBase(const char*) {
+[[nodiscard]] static uintptr_t findLibBase(const char*) noexcept {
     uintptr_t base = 0;
     dl_iterate_phdr(dl_iterate_phdr_callback, &base);
     return base;
@@ -711,13 +696,14 @@ struct DumperConfig {
 [[nodiscard]] static std::optional<std::string> extractJsonString(
     const std::string& json, std::string_view key)
 {
-    std::string needle = "\"" + std::string(key) + "\"";
+    std::string needle = std::string("\"").append(key).append("\"");
     size_t kp = json.find(needle);
     if (kp == std::string::npos) return std::nullopt;
     size_t cp = json.find(':', kp + needle.size());
     if (cp == std::string::npos) return std::nullopt;
     size_t vs = json.find_first_not_of(" \t\r\n", cp + 1);
     if (vs == std::string::npos || json[vs] != '"') return std::nullopt;
+
     std::string result;
     result.reserve(64);
     size_t i = vs + 1;
@@ -742,7 +728,7 @@ struct DumperConfig {
 [[nodiscard]] static bool extractJsonBool(
     const std::string& json, std::string_view key, bool def)
 {
-    std::string needle = "\"" + std::string(key) + "\"";
+    std::string needle = std::string("\"").append(key).append("\"");
     size_t kp = json.find(needle);
     if (kp == std::string::npos) return def;
     size_t cp = json.find(':', kp + needle.size());
@@ -768,7 +754,7 @@ struct DumperConfig {
 }
 
 [[nodiscard]] static DumperConfig loadConfig() {
-    const std::string_view paths[] = {
+    constexpr std::string_view paths[] = {
         kConfigPathPrimary, kConfigPathModule, kConfigPathKsu, kConfigPathApatch
     };
     for (auto path : paths) {
@@ -779,7 +765,7 @@ struct DumperConfig {
         if (json.empty()) continue;
         auto cfg = parseJsonConfig(json);
         LOGI("config: loaded %s  Target_Game=%s  Output=%s  64bit=%d",
-             path.data(), cfg.Target_Game.c_str(), cfg.Output.c_str(), (int)cfg.is_64bit);
+             path.data(), cfg.Target_Game.c_str(), cfg.Output.c_str(), static_cast<int>(cfg.is_64bit));
         return cfg;
     }
     LOGW("config: Eaquel_Config.json not found, using defaults");
@@ -797,8 +783,7 @@ struct DumperConfig {
 }
 
 [[nodiscard]] static bool isTargetPackage(const DumperConfig& cfg, std::string_view pkg) {
-    if (isWildcardTarget(cfg))
-        return true;
+    if (isWildcardTarget(cfg)) return true;
     return isExplicitTarget(cfg) && cfg.Target_Game == pkg;
 }
 
@@ -810,10 +795,16 @@ public:
         cb_  = std::move(cb);
         ifd_ = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
         if (ifd_ < 0) { LOGE("inotify_init1 failed errno=%d", errno); return false; }
-        efd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-        if (efd_ < 0) { LOGE("eventfd failed errno=%d", errno); ::close(ifd_); ifd_=-1; return false; }
 
-        const std::string_view paths[] = {
+        efd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+        if (efd_ < 0) {
+            LOGE("eventfd failed errno=%d", errno);
+            ::close(ifd_);
+            ifd_ = -1;
+            return false;
+        }
+
+        constexpr std::string_view paths[] = {
             kConfigPathPrimary, kConfigPathModule, kConfigPathKsu, kConfigPathApatch
         };
         bool any_watch = false;
@@ -822,7 +813,7 @@ public:
             auto slash = dir.rfind('/');
             if (slash != std::string::npos) dir.resize(slash);
             int wd = inotify_add_watch(ifd_, dir.c_str(),
-                              IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE);
+                                       IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE);
             if (wd >= 0) {
                 any_watch = true;
                 LOGI("inotify: watching %s (wd=%d)", dir.c_str(), wd);
@@ -841,7 +832,10 @@ public:
 
     void stop() {
         running_.store(false, std::memory_order_release);
-        if (efd_ >= 0) { uint64_t v = 1; (void)write(efd_, &v, 8); }
+        if (efd_ >= 0) {
+            uint64_t v = 1;
+            (void)write(efd_, &v, 8);
+        }
         if (thread_.joinable()) thread_.join();
         if (ifd_ >= 0) { ::close(ifd_); ifd_ = -1; }
         if (efd_ >= 0) { ::close(efd_); efd_ = -1; }
@@ -869,6 +863,7 @@ private:
             if (ret <= 0) continue;
             if (fds[1].revents & POLLIN) break;
             if (!(fds[0].revents & POLLIN)) continue;
+
             ssize_t len = read(ifd_, buf, sizeof(buf));
             if (len <= 0) continue;
 
@@ -877,16 +872,15 @@ private:
                 auto* ev = reinterpret_cast<inotify_event*>(ptr);
                 ptr += sizeof(inotify_event) + ev->len;
                 if (ev->len == 0) { reload = true; continue; }
-                if (strcmp(ev->name, "Eaquel_Config.json") == 0) {
-                    reload = true;
-                }
+                if (strcmp(ev->name, "Eaquel_Config.json") == 0) reload = true;
             }
+
             if (reload) {
                 struct pollfd settle_pf = { ifd_, POLLIN, 0 };
                 poll(&settle_pf, 1, 80);
                 auto cfg = loadConfig();
                 LOGI("config: hot-reload triggered -- Target_Game=%s Protected_Breaker=%d Output=%s",
-                     cfg.Target_Game.c_str(), (int)cfg.Protected_Breaker, cfg.Output.c_str());
+                     cfg.Target_Game.c_str(), static_cast<int>(cfg.Protected_Breaker), cfg.Output.c_str());
                 if (cb_) cb_(cfg);
             }
         }

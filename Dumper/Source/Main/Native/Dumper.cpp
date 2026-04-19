@@ -31,8 +31,13 @@
 #include <mutex>
 #include <poll.h>
 #include <dirent.h>
+#include <span>
+#include <ranges>
+#include <concepts>
+#include <expected>
+#include <format>
 
-static inline const char* safeStr(const char* s, const char* fallback = "") {
+[[nodiscard]] static const char* safeStr(const char* s, const char* fallback = "") noexcept {
     return (s && *s) ? s : fallback;
 }
 
@@ -43,7 +48,6 @@ static std::string          s_early_out_dir;
 static config::DumperConfig s_early_cfg;
 static std::atomic<bool>    s_early_hook_fired{false};
 static std::mutex           s_early_cfg_mutex;
-
 static std::atomic<bool>    s_onload_dump_started{false};
 
 [[nodiscard]] static bool isZygoteProcess() noexcept {
@@ -53,7 +57,8 @@ static std::atomic<bool>    s_onload_dump_started{false};
     ssize_t n = read(fd, cmdline, sizeof(cmdline) - 1);
     close(fd);
     if (n <= 0) return true;
-    bool is_zygote = (strncmp(cmdline, "zygote", 6) == 0);
+    std::string_view sv(cmdline, static_cast<size_t>(n));
+    bool is_zygote = sv.starts_with("zygote");
     if (is_zygote) LOGW("[BootGuard] Zygote detected cmdline='%s'", cmdline);
     return is_zygote;
 }
@@ -76,7 +81,7 @@ static std::atomic<bool>    s_onload_dump_started{false};
 
 [[nodiscard]] static bool isInstalledAsUserApp(std::string_view pkg) noexcept {
     if (pkg.empty()) return false;
-    std::string path = "/data/data/" + std::string(pkg);
+    std::string path = std::string("/data/data/").append(pkg);
     struct stat st{};
     if (stat(path.c_str(), &st) != 0) return false;
     return st.st_uid >= 10000u;
@@ -93,8 +98,13 @@ namespace hook_engine {
 
 static constexpr size_t kPageSize = 4096u;
 
-static uintptr_t alignDown(uintptr_t a) { return a & ~(kPageSize - 1u); }
-static uintptr_t alignUp  (uintptr_t a) { return (a + kPageSize - 1u) & ~(kPageSize - 1u); }
+[[nodiscard]] static uintptr_t alignDown(uintptr_t a) noexcept {
+    return a & ~(kPageSize - 1u);
+}
+
+[[nodiscard]] static uintptr_t alignUp(uintptr_t a) noexcept {
+    return (a + kPageSize - 1u) & ~(kPageSize - 1u);
+}
 
 static bool stealthPatchWindow(uintptr_t addr, size_t len,
                                const std::function<void()>& patch_fn)
@@ -115,12 +125,12 @@ static bool stealthPatchWindow(uintptr_t addr, size_t len,
     return true;
 }
 
-static void flushCache(uintptr_t addr, size_t len) {
+static void flushCache(uintptr_t addr, size_t len) noexcept {
     __builtin___clear_cache(reinterpret_cast<char*>(addr),
                             reinterpret_cast<char*>(addr + len));
 }
 
-static void* allocTrampolinePage(uintptr_t near_addr) {
+static void* allocTrampolinePage(uintptr_t near_addr) noexcept {
     uintptr_t lo = (near_addr > 0x8000000u) ? (near_addr - 0x8000000u) : 0u;
     uintptr_t hi = near_addr + 0x8000000u;
 
@@ -157,7 +167,7 @@ static void* allocTrampolinePage(uintptr_t near_addr) {
     return result;
 }
 
-static bool lockTrampolineRX(void* page) {
+static bool lockTrampolineRX(void* page) noexcept {
     return mprotect(page, kPageSize, PROT_READ | PROT_EXEC) == 0;
 }
 
@@ -179,7 +189,7 @@ struct Trampoline {
     if (!tramp_page) { LOGE("hook[arm64]: trampoline alloc failed"); return false; }
 
     auto* tramp       = reinterpret_cast<Trampoline*>(tramp_page);
-    memcpy(tramp->saved, reinterpret_cast<void*>(tgt), kHookSize);
+    __builtin_memcpy(tramp->saved, reinterpret_cast<void*>(tgt), kHookSize);
     tramp->ldr_x17    = 0x58000051u;
     tramp->br_x17     = 0xD61F0220u;
     tramp->return_addr = static_cast<uint64_t>(tgt + kHookSize);
@@ -193,10 +203,10 @@ struct Trampoline {
         auto*    dst      = reinterpret_cast<uint8_t*>(tgt);
         uint32_t ldr      = 0x58000051u;
         uint32_t br       = 0xD61F0220u;
-        memcpy(dst,     &ldr, 4);
-        memcpy(dst + 4, &br,  4);
+        __builtin_memcpy(dst,     &ldr, 4);
+        __builtin_memcpy(dst + 4, &br,  4);
         uint64_t hook_addr = reinterpret_cast<uint64_t>(hook);
-        memcpy(dst + 8, &hook_addr, 8);
+        __builtin_memcpy(dst + 8, &hook_addr, 8);
         flushCache(tgt, kHookSize);
     });
 
@@ -217,11 +227,11 @@ static constexpr size_t kHookSize = 8u;
     auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
     if (!tramp_page) { LOGE("hook[arm32]: trampoline alloc failed"); return false; }
 
-    memcpy(tramp_page, reinterpret_cast<void*>(tgt), kHookSize);
+    __builtin_memcpy(tramp_page, reinterpret_cast<void*>(tgt), kHookSize);
     const uint8_t jback[] = { 0xDF, 0xF8, 0x00, 0xF0 };
-    memcpy(tramp_page + kHookSize, jback, 4);
+    __builtin_memcpy(tramp_page + kHookSize, jback, 4);
     uint32_t ret_addr = static_cast<uint32_t>(tgt + kHookSize) | 1u;
-    memcpy(tramp_page + kHookSize + 4, &ret_addr, 4);
+    __builtin_memcpy(tramp_page + kHookSize + 4, &ret_addr, 4);
     flushCache(reinterpret_cast<uintptr_t>(tramp_page), kHookSize + 8);
 
     if (!lockTrampolineRX(tramp_page)) {
@@ -230,9 +240,9 @@ static constexpr size_t kHookSize = 8u;
 
     bool ok = stealthPatchWindow(tgt, kHookSize, [&]() {
         const uint8_t ldr_pc[] = { 0xDF, 0xF8, 0x00, 0xF0 };
-        memcpy(reinterpret_cast<void*>(tgt), ldr_pc, 4);
+        __builtin_memcpy(reinterpret_cast<void*>(tgt), ldr_pc, 4);
         uint32_t hook_addr = reinterpret_cast<uint32_t>(hook) | 1u;
-        memcpy(reinterpret_cast<void*>(tgt + 4), &hook_addr, 4);
+        __builtin_memcpy(reinterpret_cast<void*>(tgt + 4), &hook_addr, 4);
         flushCache(tgt, kHookSize);
     });
 
@@ -253,7 +263,7 @@ static constexpr size_t kHookSize = 14u;
     auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
     if (!tramp_page) { LOGE("hook[x86]: trampoline alloc failed"); return false; }
 
-    memcpy(tramp_page, reinterpret_cast<void*>(tgt), kHookSize);
+    __builtin_memcpy(tramp_page, reinterpret_cast<void*>(tgt), kHookSize);
     flushCache(reinterpret_cast<uintptr_t>(tramp_page), kHookSize);
 
     if (!lockTrampolineRX(tramp_page)) {
@@ -265,14 +275,14 @@ static constexpr size_t kHookSize = 14u;
 #if defined(__x86_64__)
         dst[0] = 0xFF; dst[1] = 0x25;
         uint32_t rel = 0;
-        memcpy(dst + 2, &rel, 4);
+        __builtin_memcpy(dst + 2, &rel, 4);
         uint64_t hook_addr = reinterpret_cast<uint64_t>(hook);
-        memcpy(dst + 6, &hook_addr, 8);
+        __builtin_memcpy(dst + 6, &hook_addr, 8);
 #else
         dst[0] = 0xE9;
         uint32_t rel = static_cast<uint32_t>(
             reinterpret_cast<uintptr_t>(hook) - tgt - 5u);
-        memcpy(dst + 1, &rel, 4);
+        __builtin_memcpy(dst + 1, &rel, 4);
 #endif
         flushCache(tgt, kHookSize);
     });
@@ -284,7 +294,7 @@ static constexpr size_t kHookSize = 14u;
 }
 
 #else
-[[nodiscard]] bool installInlineHook(void*, void*, void**) { return false; }
+[[nodiscard]] bool installInlineHook(void*, void*, void**) noexcept { return false; }
 #endif
 
 [[nodiscard]] bool patchGotSlot(void* target_fn, void* hook_fn, void** orig_out) {
@@ -365,7 +375,7 @@ static void persistDecryptedMetadata(const void* data, size_t size, const char* 
     }
 
     uint32_t out_magic = 0;
-    if (plaintext.size() >= 4) memcpy(&out_magic, plaintext.data(), 4);
+    if (plaintext.size() >= 4) __builtin_memcpy(&out_magic, plaintext.data(), 4);
     if (out_magic != entropy::kIl2CppMetadataMagic)
         LOGW("[MetaHook] Output magic 0x%08X -- may still be encrypted", out_magic);
 
@@ -384,7 +394,7 @@ static void persistDecryptedMetadata(const void* data, size_t size, const char* 
     while (left > 0) {
         ssize_t w = write(fd, ptr, left);
         if (w <= 0) break;
-        ptr  += w;
+        ptr  += static_cast<size_t>(w);
         left -= static_cast<size_t>(w);
     }
     close(fd);
@@ -537,7 +547,7 @@ struct FunctionTable {
     const char*    (*image_get_name)(const Il2CppImage*)                                 = nullptr;
     size_t         (*image_get_class_count)(const Il2CppImage*)                          = nullptr;
     Il2CppClass*   (*image_get_class)(const Il2CppImage*, size_t)                        = nullptr;
-    const Il2CppType* (*class_get_type)(Il2CppClass*)                                   = nullptr;
+    const Il2CppType* (*class_get_type)(Il2CppClass*)                                    = nullptr;
     Il2CppClass*   (*class_from_type)(const Il2CppType*)                                 = nullptr;
     const char*    (*class_get_name)(Il2CppClass*)                                       = nullptr;
     const char*    (*class_get_namespace)(Il2CppClass*)                                  = nullptr;
@@ -583,7 +593,7 @@ static FunctionTable g_api;
 static uint64_t      g_il2cpp_base = 0;
 
 template<typename T>
-static void resolveSymbol(void* handle, const char* name, T& out) {
+static void resolveSymbol(void* handle, const char* name, T& out) noexcept {
     if (!handle || !name) return;
     void* sym = dlsym(handle, name);
     if (sym) out = reinterpret_cast<T>(sym);
@@ -591,7 +601,7 @@ static void resolveSymbol(void* handle, const char* name, T& out) {
 }
 
 template<typename T>
-static void applyFallback(uintptr_t addr, T& out) {
+static void applyFallback(uintptr_t addr, T& out) noexcept {
     if (!out && addr && scanner::isReadableAddress(addr)) {
         out = reinterpret_cast<T>(addr);
         LOGI("scanner fallback: 0x%" PRIxPTR, addr);
@@ -694,37 +704,38 @@ static void populateFunctionTable(uintptr_t base) {
 } // namespace il2cpp_api
 
 static std::string buildMethodModifier(uint32_t flags) {
-    std::stringstream out;
+    std::string out;
+    out.reserve(32);
     switch (flags & METHOD_ATTRIBUTE_MEMBER_ACCESS_MASK) {
-        case METHOD_ATTRIBUTE_PRIVATE:       out << "private ";            break;
-        case METHOD_ATTRIBUTE_PUBLIC:        out << "public ";             break;
-        case METHOD_ATTRIBUTE_FAMILY:        out << "protected ";          break;
+        case METHOD_ATTRIBUTE_PRIVATE:       out += "private ";            break;
+        case METHOD_ATTRIBUTE_PUBLIC:        out += "public ";             break;
+        case METHOD_ATTRIBUTE_FAMILY:        out += "protected ";          break;
         case METHOD_ATTRIBUTE_ASSEM:
-        case METHOD_ATTRIBUTE_FAM_AND_ASSEM: out << "internal ";           break;
-        case METHOD_ATTRIBUTE_FAM_OR_ASSEM:  out << "protected internal "; break;
+        case METHOD_ATTRIBUTE_FAM_AND_ASSEM: out += "internal ";           break;
+        case METHOD_ATTRIBUTE_FAM_OR_ASSEM:  out += "protected internal "; break;
         default: break;
     }
-    if (flags & METHOD_ATTRIBUTE_STATIC)   out << "static ";
+    if (flags & METHOD_ATTRIBUTE_STATIC)   out += "static ";
     if (flags & METHOD_ATTRIBUTE_ABSTRACT) {
-        out << "abstract ";
+        out += "abstract ";
         if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT)
-            out << "override ";
+            out += "override ";
     } else if (flags & METHOD_ATTRIBUTE_FINAL) {
         if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT)
-            out << "sealed override ";
+            out += "sealed override ";
     } else if (flags & METHOD_ATTRIBUTE_VIRTUAL) {
-        out << ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_NEW_SLOT
-                ? "virtual " : "override ");
+        out += ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_NEW_SLOT)
+               ? "virtual " : "override ";
     }
-    if (flags & METHOD_ATTRIBUTE_PINVOKE_IMPL) out << "extern ";
-    return out.str();
+    if (flags & METHOD_ATTRIBUTE_PINVOKE_IMPL) out += "extern ";
+    return out;
 }
 
 static std::string safeClassName(Il2CppClass* klass) {
     if (!klass) return "object";
     auto& api  = il2cpp_api::g_api;
     auto  name = api.class_get_name ? api.class_get_name(klass) : nullptr;
-    return safeStr(name, "object");
+    return std::string(safeStr(name, "object"));
 }
 
 struct MethodEntry {
@@ -735,7 +746,7 @@ struct MethodEntry {
 
 struct FieldEntry {
     std::string name, type_name, modifier;
-    uint64_t    offset = 0;
+    uint64_t    offset    = 0;
     bool        is_static = false;
 };
 
@@ -746,9 +757,11 @@ struct PropertyEntry {
 
 struct ClassEntry {
     std::string name, ns, parent, full_name;
-    bool        is_abstract = false, is_interface = false,
-                is_enum = false, is_valuetype = false,
-                is_generic = false;
+    bool        is_abstract   = false;
+    bool        is_interface  = false;
+    bool        is_enum       = false;
+    bool        is_valuetype  = false;
+    bool        is_generic    = false;
     std::vector<MethodEntry>   methods;
     std::vector<FieldEntry>    fields;
     std::vector<PropertyEntry> properties;
@@ -769,9 +782,9 @@ static std::string resolveTypeName(const Il2CppType* t) {
         base += "<T>";
     }
 
-    if (t->type == IL2CPP_TYPE_SZARRAY || t->type == IL2CPP_TYPE_ARRAY) {
+    if (t->type == IL2CPP_TYPE_SZARRAY || t->type == IL2CPP_TYPE_ARRAY)
         base += "[]";
-    }
+
     if (is_byref) base = "ref " + base;
     return base;
 }
@@ -829,7 +842,7 @@ static std::vector<FieldEntry> extractFields(Il2CppClass* klass) {
         e.name = safeStr(api.field_get_name ? api.field_get_name(field) : nullptr, "?");
         const Il2CppType* ft = api.field_get_type ? api.field_get_type(field) : nullptr;
         e.type_name = resolveTypeName(ft);
-        e.offset    = api.field_get_offset ? api.field_get_offset(field) : 0;
+        e.offset    = api.field_get_offset ? static_cast<uint64_t>(api.field_get_offset(field)) : 0u;
         uint32_t fg = api.field_get_flags ? api.field_get_flags(field) : 0;
         e.is_static = (fg & FIELD_ATTRIBUTE_STATIC) != 0;
         e.modifier  = e.is_static ? "static " : "";
@@ -862,12 +875,16 @@ static std::vector<PropertyEntry> extractProperties(Il2CppClass* klass) {
     return result;
 }
 
+static void ensureDirectory(const std::string& path) {
+    struct stat st{};
+    if (stat(path.c_str(), &st) != 0) mkdir(path.c_str(), 0777);
+}
+
 static void writeCppHeader(const std::string& out_dir,
                            const std::string& image_name,
                            const std::vector<ClassEntry>& classes)
 {
-    struct stat st{};
-    if (stat(out_dir.c_str(), &st) != 0) mkdir(out_dir.c_str(), 0777);
+    ensureDirectory(out_dir);
 
     std::string path = out_dir + "/" + image_name + ".h";
     std::ofstream f(path);
@@ -877,9 +894,9 @@ static void writeCppHeader(const std::string& out_dir,
 
     for (auto& cls : classes) {
         if (!cls.ns.empty()) f << "namespace " << cls.ns << " {\n";
-        if (cls.is_interface) f << "struct /* interface */ " << cls.name;
-        else if (cls.is_enum) f << "enum class " << cls.name;
-        else                  f << "struct " << cls.name;
+        if (cls.is_interface)      f << "struct /* interface */ " << cls.name;
+        else if (cls.is_enum)      f << "enum class " << cls.name;
+        else                       f << "struct " << cls.name;
         if (!cls.parent.empty() && cls.parent != "object")
             f << " : public " << cls.parent;
         f << " {\n";
@@ -907,8 +924,7 @@ static void writeFridaScript(const std::string& out_dir,
                              const std::string& image_name,
                              const std::vector<ClassEntry>& classes)
 {
-    struct stat st{};
-    if (stat(out_dir.c_str(), &st) != 0) mkdir(out_dir.c_str(), 0777);
+    ensureDirectory(out_dir);
 
     std::string path = out_dir + "/" + image_name + ".js";
     std::ofstream f(path);
@@ -957,9 +973,7 @@ static void runDump(const std::string& out_dir, const config::DumperConfig& cfg)
     }
 
     LOGI("runDump: %zu assemblies found", count);
-
-    struct stat st{};
-    if (stat(out_dir.c_str(), &st) != 0) mkdir(out_dir.c_str(), 0777);
+    ensureDirectory(out_dir);
 
     for (size_t ai = 0; ai < count; ++ai) {
         const Il2CppAssembly* asm_ptr = assemblies[ai];
@@ -987,8 +1001,8 @@ static void runDump(const std::string& out_dir, const config::DumperConfig& cfg)
             if (!klass) continue;
 
             ClassEntry e;
-            e.name        = safeStr(api.class_get_name ? api.class_get_name(klass) : nullptr, "?");
-            e.ns          = safeStr(api.class_get_namespace ? api.class_get_namespace(klass) : nullptr);
+            e.name        = safeStr(api.class_get_name      ? api.class_get_name(klass)      : nullptr, "?");
+            e.ns          = safeStr(api.class_get_namespace  ? api.class_get_namespace(klass)  : nullptr);
             e.full_name   = e.ns.empty() ? e.name : (e.ns + "." + e.name);
             e.is_abstract  = api.class_is_abstract  && api.class_is_abstract(klass);
             e.is_interface = api.class_is_interface && api.class_is_interface(klass);
@@ -1015,7 +1029,7 @@ static void runDump(const std::string& out_dir, const config::DumperConfig& cfg)
 
 namespace {
 
-static int64_t exponentialDelay(int attempt) {
+[[nodiscard]] static int64_t exponentialDelay(int attempt) noexcept {
     int64_t ms = 200LL * (1LL << std::min(attempt, 5));
     return std::min(ms, static_cast<int64_t>(2000));
 }
@@ -1051,9 +1065,9 @@ static void hackStart(
     LOGI("hackStart tid=%d  game=%s  out=%s  api=%d",
          gettid(), game_dir.c_str(), out_dir.c_str(), getAndroidApiLevel());
 
-    constexpr int     kMaxRetries  = 20;
-    constexpr int64_t kMaxTotalMs  = 30'000;
-    int64_t           elapsed_ms   = 0;
+    constexpr int     kMaxRetries = 20;
+    constexpr int64_t kMaxTotalMs = 30'000;
+    int64_t           elapsed_ms  = 0;
 
     for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
         uintptr_t base = scanner::findLibBase("libil2cpp.so");
@@ -1068,7 +1082,7 @@ static void hackStart(
             return;
         }
 
-        auto delay = exponentialDelay(attempt);
+        auto delay  = exponentialDelay(attempt);
         elapsed_ms += delay;
         if (elapsed_ms >= kMaxTotalMs) {
             LOGE("[BootGuard] TIMEOUT: libil2cpp.so not found in 30s -- stopping");
@@ -1111,7 +1125,8 @@ static void launchOnLoadDump(const config::DumperConfig& cfg) {
                       ? std::string(config::kFallbackOutput)
                       : cfg.Output;
 
-    LOGI("[onLoad-Dump] launching dump thread Target=%s Out=%s", cfg.Target_Game.c_str(), out.c_str());
+    LOGI("[onLoad-Dump] launching dump thread Target=%s Out=%s",
+         cfg.Target_Game.c_str(), out.c_str());
 
     installSigsegvHandler();
 
@@ -1152,7 +1167,8 @@ public:
             return;
         }
 
-        LOGI("[onLoad] Config valid Target=%s -- launching zygote-based dump immediately", cfg.Target_Game.c_str());
+        LOGI("[onLoad] Config valid Target=%s -- launching zygote-based dump immediately",
+             cfg.Target_Game.c_str());
         launchOnLoadDump(cfg);
     }
 
@@ -1246,11 +1262,11 @@ public:
     }
 
 private:
-    rezygisk::Api*       api         = nullptr;
-    JNIEnv*              env         = nullptr;
-    bool                 enable_hack = false;
-    std::string          game_dir, out_dir;
-    config::DumperConfig active_cfg;
+    rezygisk::Api*        api          = nullptr;
+    JNIEnv*               env          = nullptr;
+    bool                  enable_hack  = false;
+    std::string           game_dir, out_dir;
+    config::DumperConfig  active_cfg;
     config::ConfigWatcher watcher_;
     std::mutex            cfg_mutex_;
     std::atomic<bool>     dump_running_{false};
@@ -1300,8 +1316,8 @@ private:
             }
             LOGI("hot-reload: config updated Target=%s Cpp=%d Frida=%d Out=%s",
                  new_cfg.Target_Game.c_str(),
-                 (int)new_cfg.Cpp_Header,
-                 (int)new_cfg.Frida_Script,
+                 static_cast<int>(new_cfg.Cpp_Header),
+                 static_cast<int>(new_cfg.Frida_Script),
                  new_cfg.Output.c_str());
 
             if (enable_hack) {
@@ -1333,7 +1349,7 @@ private:
                 is_target = true;
                 LOGI("Explicit target match: %s", pkg.c_str());
             } else if (!app_data_dir.empty() &&
-                       strstr(app_data_dir.c_str(), active_cfg.Target_Game.c_str()) != nullptr) {
+                       app_data_dir.find(active_cfg.Target_Game) != std::string::npos) {
                 is_target = true;
                 LOGI("Explicit target detected via app_data_dir");
             }
@@ -1346,7 +1362,9 @@ private:
         }
 
         LOGI("TARGET DETECTED: %s  [64bit=%d  api=%d]",
-             active_cfg.Target_Game.c_str(), (int)active_cfg.is_64bit, getAndroidApiLevel());
+             active_cfg.Target_Game.c_str(),
+             static_cast<int>(active_cfg.is_64bit),
+             getAndroidApiLevel());
 
         enable_hack = true;
         game_dir    = app_data_dir;
@@ -1360,7 +1378,7 @@ private:
 
 REGISTER_REZYGISK_MODULE(EaquelDumperModule)
 
-#if defined(__arm__) || defined(__aarch64__)
+#if defined(__arm__) || defined(__aarch64__) || defined(__x86_64__) || defined(__i386__)
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     if (!vm) return JNI_ERR;
 
