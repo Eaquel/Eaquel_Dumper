@@ -94,7 +94,7 @@ static std::mutex           s_early_cfg_mutex;
 
 namespace hook_engine {
 
-static constexpr size_t kPageSize = 4096;
+static constexpr size_t kPageSize = 4096u;
 
 static uintptr_t alignDown(uintptr_t a) { return a & ~(kPageSize - 1u); }
 static uintptr_t alignUp  (uintptr_t a) { return (a + kPageSize - 1u) & ~(kPageSize - 1u); }
@@ -124,7 +124,7 @@ static void flushCache(uintptr_t addr, size_t len) {
 }
 
 static void* allocTrampolinePage(uintptr_t near_addr) {
-    uintptr_t lo = (near_addr > 0x8000000u) ? (near_addr - 0x8000000u) : 0;
+    uintptr_t lo = (near_addr > 0x8000000u) ? (near_addr - 0x8000000u) : 0u;
     uintptr_t hi = near_addr + 0x8000000u;
 
     FILE* f = fopen("/proc/self/maps", "r");
@@ -139,7 +139,7 @@ static void* allocTrampolinePage(uintptr_t near_addr) {
         if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &s, &e) != 2) continue;
         if (s > hi) break;
         if (s > prev_end && (s - prev_end) >= kPageSize) {
-            uintptr_t try_addr = (prev_end + kPageSize - 1) & ~(kPageSize - 1u);
+            uintptr_t try_addr = (prev_end + kPageSize - 1u) & ~(kPageSize - 1u);
             if (try_addr + kPageSize <= s) {
                 void* p = mmap(reinterpret_cast<void*>(try_addr), kPageSize,
                                PROT_READ | PROT_WRITE,
@@ -165,7 +165,7 @@ static bool lockTrampolineRX(void* page) {
 }
 
 #if defined(__aarch64__)
-static constexpr size_t kHookSize = 16;
+static constexpr size_t kHookSize = 16u;
 
 struct Trampoline {
     uint8_t  saved[kHookSize];
@@ -210,7 +210,7 @@ struct Trampoline {
 }
 
 #elif defined(__arm__)
-static constexpr size_t kHookSize = 8;
+static constexpr size_t kHookSize = 8u;
 
 [[nodiscard]] bool installInlineHook(void* target, void* hook, void** orig_out) {
     auto tgt_thumb = reinterpret_cast<uintptr_t>(target);
@@ -247,7 +247,7 @@ static constexpr size_t kHookSize = 8;
 }
 
 #elif defined(__x86_64__) || defined(__i386__)
-static constexpr size_t kHookSize = 14;
+static constexpr size_t kHookSize = 14u;
 
 [[nodiscard]] bool installInlineHook(void* target, void* hook, void** orig_out) {
     auto tgt = reinterpret_cast<uintptr_t>(target);
@@ -274,7 +274,7 @@ static constexpr size_t kHookSize = 14;
 #else
         dst[0] = 0xE9;
         uint32_t rel = static_cast<uint32_t>(
-            reinterpret_cast<uintptr_t>(hook) - tgt - 5);
+            reinterpret_cast<uintptr_t>(hook) - tgt - 5u);
         memcpy(dst + 1, &rel, 4);
 #endif
         flushCache(tgt, kHookSize);
@@ -1138,15 +1138,25 @@ public:
 
         active_cfg = config::loadConfig();
 
-        if (active_cfg.Target_Game != "!" &&
-            !process_filter::isThirdPartyApp(pkg_str) &&
-            !isInstalledAsUserApp(pkg_str))
-        {
-            api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
+        if (config::isExplicitTarget(active_cfg)) {
+            if (active_cfg.Target_Game != pkg_str) {
+                api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
+                return;
+            }
+            preSpecialize(pkg_str, dir_str);
             return;
         }
 
-        preSpecialize(pkg_str, dir_str);
+        if (config::isWildcardTarget(active_cfg)) {
+            if (!process_filter::isThirdPartyApp(pkg_str) && !isInstalledAsUserApp(pkg_str)) {
+                api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
+                return;
+            }
+            preSpecialize(pkg_str, dir_str);
+            return;
+        }
+
+        api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
     }
 
     void postAppSpecialize(const rezygisk::AppSpecializeArgs*) override {
@@ -1267,18 +1277,20 @@ private:
 
         bool is_target = false;
 
-        if (active_cfg.Target_Game == "!") {
+        if (config::isWildcardTarget(active_cfg)) {
             if (process_filter::isThirdPartyApp(pkg) || isInstalledAsUserApp(pkg)) {
                 is_target = true;
                 LOGI("Target_Game=! wildcard match for third-party app %s", pkg.c_str());
             }
-        } else if (!pkg.empty() && !active_cfg.Target_Game.empty()
-                   && active_cfg.Target_Game == pkg) {
-            is_target = true;
-        } else if (!app_data_dir.empty() && !active_cfg.Target_Game.empty()
-                   && strstr(app_data_dir.c_str(), active_cfg.Target_Game.c_str()) != nullptr) {
-            is_target = true;
-            LOGI("target detected via app_data_dir");
+        } else if (config::isExplicitTarget(active_cfg)) {
+            if (active_cfg.Target_Game == pkg) {
+                is_target = true;
+                LOGI("Explicit target match: %s", pkg.c_str());
+            } else if (!app_data_dir.empty() &&
+                       strstr(app_data_dir.c_str(), active_cfg.Target_Game.c_str()) != nullptr) {
+                is_target = true;
+                LOGI("Explicit target detected via app_data_dir");
+            }
         }
 
         if (!is_target) {

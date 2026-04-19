@@ -1,18 +1,21 @@
 cmake_minimum_required(VERSION 4.3.1)
 
 if(NOT DEFINED MODULE_NAME)
-    message(FATAL_ERROR "MODULE_NAME must be set: -DMODULE_NAME=eaqueldumper")
+    message(FATAL_ERROR "MODULE_NAME must be set: -DMODULE_NAME=eaquel_dumper")
 endif()
 
 project(${MODULE_NAME}
     LANGUAGES    CXX
-    VERSION      4.0.0
-    DESCRIPTION  "Eaquel IL2CPP Dumper — ReZygisk Stealth Architecture v4.0"
+    VERSION      1.0.0
+    DESCRIPTION  "Eaquel IL2CPP Dumper — ReZygisk Stealth Architecture v1.0"
+    HOMEPAGE_URL "https://github.com/Eaquel/Eaquel_Dumper"
 )
 
 set(CMAKE_CXX_STANDARD          23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS        OFF)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(EAQUEL_MIN_API 30)
 set(EAQUEL_MAX_API 37)
@@ -46,7 +49,7 @@ else()
     message(WARNING "Unknown ABI '${CMAKE_ANDROID_ARCH_ABI}' — proceeding with generic settings")
 endif()
 
-message(STATUS "[Eaquel v4] ABI=${CMAKE_ANDROID_ARCH_ABI}  ARCH=${EAQUEL_ARCH}  64BIT=${EAQUEL_IS_64BIT}  EMU=${EAQUEL_IS_EMU}  BUILD=${CMAKE_BUILD_TYPE}")
+message(STATUS "[Eaquel v1] ABI=${CMAKE_ANDROID_ARCH_ABI}  ARCH=${EAQUEL_ARCH}  64BIT=${EAQUEL_IS_64BIT}  EMU=${EAQUEL_IS_EMU}  BUILD=${CMAKE_BUILD_TYPE}")
 
 set(EAQUEL_COMMON_FLAGS
     -Werror=format
@@ -54,7 +57,7 @@ set(EAQUEL_COMMON_FLAGS
     -ffunction-sections
     -fstack-protector-strong
     -D_FORTIFY_SOURCE=2
-    -DEAQUEL_VERSION_MAJOR=4
+    -DEAQUEL_VERSION_MAJOR=1
     -DEAQUEL_VERSION_MINOR=0
     -DANDROID_MIN_API=${EAQUEL_MIN_API}
     -DANDROID_MAX_API=${EAQUEL_MAX_API}
@@ -65,6 +68,7 @@ set(EAQUEL_CXX_FLAGS
     -fno-rtti
     -Wnull-dereference
     -Woverloaded-virtual
+    -Wno-unused-result
 )
 
 if(EAQUEL_ARCH STREQUAL "arm64")
@@ -152,6 +156,13 @@ target_link_libraries(${MODULE_NAME}
         android
 )
 
+set_target_properties(${MODULE_NAME} PROPERTIES
+    CXX_STANDARD          23
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS        OFF
+    POSITION_INDEPENDENT_CODE ON
+)
+
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_custom_command(
         TARGET  ${MODULE_NAME}
@@ -161,13 +172,14 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
                 --remove-section=.comment
                 --remove-section=.note
                 $<TARGET_FILE:${MODULE_NAME}>
+        COMMENT "Stripping ${MODULE_NAME}"
     )
 endif()
 
-message(STATUS "[Eaquel v4] Target      : ${MODULE_NAME}")
-message(STATUS "[Eaquel v4] Arch        : ${EAQUEL_ARCH}")
-message(STATUS "[Eaquel v4] 64-bit      : ${EAQUEL_IS_64BIT}")
-message(STATUS "[Eaquel v4] Emulator    : ${EAQUEL_IS_EMU}")
-message(STATUS "[Eaquel v4] Build       : ${CMAKE_BUILD_TYPE}")
-message(STATUS "[Eaquel v4] CXX         : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
-message(STATUS "[Eaquel v4] Android API : ${ANDROID_PLATFORM} (range ${EAQUEL_MIN_API}-${EAQUEL_MAX_API})")
+message(STATUS "[Eaquel v1] Target      : ${MODULE_NAME}")
+message(STATUS "[Eaquel v1] Arch        : ${EAQUEL_ARCH}")
+message(STATUS "[Eaquel v1] 64-bit      : ${EAQUEL_IS_64BIT}")
+message(STATUS "[Eaquel v1] Emulator    : ${EAQUEL_IS_EMU}")
+message(STATUS "[Eaquel v1] Build       : ${CMAKE_BUILD_TYPE}")
+message(STATUS "[Eaquel v1] CXX         : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "[Eaquel v1] Android API : ${ANDROID_PLATFORM} (range ${EAQUEL_MIN_API}-${EAQUEL_MAX_API})")

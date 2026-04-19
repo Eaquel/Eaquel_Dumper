@@ -21,6 +21,8 @@
 #include <span>
 #include <ranges>
 #include <concepts>
+#include <expected>
+#include <print>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/inotify.h>
@@ -40,118 +42,118 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 
-inline constexpr uint32_t FIELD_ATTRIBUTE_FIELD_ACCESS_MASK    = 0x0007;
-inline constexpr uint32_t FIELD_ATTRIBUTE_COMPILER_CONTROLLED  = 0x0000;
-inline constexpr uint32_t FIELD_ATTRIBUTE_PRIVATE              = 0x0001;
-inline constexpr uint32_t FIELD_ATTRIBUTE_FAM_AND_ASSEM        = 0x0002;
-inline constexpr uint32_t FIELD_ATTRIBUTE_ASSEMBLY             = 0x0003;
-inline constexpr uint32_t FIELD_ATTRIBUTE_FAMILY               = 0x0004;
-inline constexpr uint32_t FIELD_ATTRIBUTE_FAM_OR_ASSEM         = 0x0005;
-inline constexpr uint32_t FIELD_ATTRIBUTE_PUBLIC               = 0x0006;
-inline constexpr uint32_t FIELD_ATTRIBUTE_STATIC               = 0x0010;
-inline constexpr uint32_t FIELD_ATTRIBUTE_INIT_ONLY            = 0x0020;
-inline constexpr uint32_t FIELD_ATTRIBUTE_LITERAL              = 0x0040;
-inline constexpr uint32_t FIELD_ATTRIBUTE_NOT_SERIALIZED       = 0x0080;
-inline constexpr uint32_t FIELD_ATTRIBUTE_SPECIAL_NAME         = 0x0200;
-inline constexpr uint32_t FIELD_ATTRIBUTE_PINVOKE_IMPL         = 0x2000;
-inline constexpr uint32_t FIELD_ATTRIBUTE_RESERVED_MASK        = 0x9500;
-inline constexpr uint32_t FIELD_ATTRIBUTE_RT_SPECIAL_NAME      = 0x0400;
-inline constexpr uint32_t FIELD_ATTRIBUTE_HAS_FIELD_MARSHAL    = 0x1000;
-inline constexpr uint32_t FIELD_ATTRIBUTE_HAS_DEFAULT          = 0x8000;
-inline constexpr uint32_t FIELD_ATTRIBUTE_HAS_FIELD_RVA        = 0x0100;
+inline constexpr uint32_t FIELD_ATTRIBUTE_FIELD_ACCESS_MASK    = 0x0007u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_COMPILER_CONTROLLED  = 0x0000u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_PRIVATE              = 0x0001u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_FAM_AND_ASSEM        = 0x0002u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_ASSEMBLY             = 0x0003u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_FAMILY               = 0x0004u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_FAM_OR_ASSEM         = 0x0005u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_PUBLIC               = 0x0006u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_STATIC               = 0x0010u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_INIT_ONLY            = 0x0020u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_LITERAL              = 0x0040u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_NOT_SERIALIZED       = 0x0080u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_SPECIAL_NAME         = 0x0200u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_PINVOKE_IMPL         = 0x2000u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_RESERVED_MASK        = 0x9500u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_RT_SPECIAL_NAME      = 0x0400u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_HAS_FIELD_MARSHAL    = 0x1000u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_HAS_DEFAULT          = 0x8000u;
+inline constexpr uint32_t FIELD_ATTRIBUTE_HAS_FIELD_RVA        = 0x0100u;
 
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_CODE_TYPE_MASK      = 0x0003;
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_IL                  = 0x0000;
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_NATIVE              = 0x0001;
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_OPTIL               = 0x0002;
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_RUNTIME             = 0x0003;
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_MANAGED_MASK        = 0x0004;
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_UNMANAGED           = 0x0004;
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_MANAGED             = 0x0000;
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_FORWARD_REF         = 0x0010;
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_PRESERVE_SIG        = 0x0080;
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_INTERNAL_CALL       = 0x1000;
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_SYNCHRONIZED        = 0x0020;
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_NOINLINING          = 0x0008;
-inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_MAX_METHOD_IMPL_VAL = 0xffff;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_CODE_TYPE_MASK      = 0x0003u;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_IL                  = 0x0000u;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_NATIVE              = 0x0001u;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_OPTIL               = 0x0002u;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_RUNTIME             = 0x0003u;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_MANAGED_MASK        = 0x0004u;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_UNMANAGED           = 0x0004u;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_MANAGED             = 0x0000u;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_FORWARD_REF         = 0x0010u;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_PRESERVE_SIG        = 0x0080u;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_INTERNAL_CALL       = 0x1000u;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_SYNCHRONIZED        = 0x0020u;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_NOINLINING          = 0x0008u;
+inline constexpr uint32_t METHOD_IMPL_ATTRIBUTE_MAX_METHOD_IMPL_VAL = 0xffffu;
 
-inline constexpr uint32_t METHOD_ATTRIBUTE_MEMBER_ACCESS_MASK   = 0x0007;
-inline constexpr uint32_t METHOD_ATTRIBUTE_COMPILER_CONTROLLED  = 0x0000;
-inline constexpr uint32_t METHOD_ATTRIBUTE_PRIVATE              = 0x0001;
-inline constexpr uint32_t METHOD_ATTRIBUTE_FAM_AND_ASSEM        = 0x0002;
-inline constexpr uint32_t METHOD_ATTRIBUTE_ASSEM                = 0x0003;
-inline constexpr uint32_t METHOD_ATTRIBUTE_FAMILY               = 0x0004;
-inline constexpr uint32_t METHOD_ATTRIBUTE_FAM_OR_ASSEM         = 0x0005;
-inline constexpr uint32_t METHOD_ATTRIBUTE_PUBLIC               = 0x0006;
-inline constexpr uint32_t METHOD_ATTRIBUTE_STATIC               = 0x0010;
-inline constexpr uint32_t METHOD_ATTRIBUTE_FINAL                = 0x0020;
-inline constexpr uint32_t METHOD_ATTRIBUTE_VIRTUAL              = 0x0040;
-inline constexpr uint32_t METHOD_ATTRIBUTE_HIDE_BY_SIG          = 0x0080;
-inline constexpr uint32_t METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK   = 0x0100;
-inline constexpr uint32_t METHOD_ATTRIBUTE_REUSE_SLOT           = 0x0000;
-inline constexpr uint32_t METHOD_ATTRIBUTE_NEW_SLOT             = 0x0100;
-inline constexpr uint32_t METHOD_ATTRIBUTE_STRICT               = 0x0200;
-inline constexpr uint32_t METHOD_ATTRIBUTE_ABSTRACT             = 0x0400;
-inline constexpr uint32_t METHOD_ATTRIBUTE_SPECIAL_NAME         = 0x0800;
-inline constexpr uint32_t METHOD_ATTRIBUTE_PINVOKE_IMPL         = 0x2000;
-inline constexpr uint32_t METHOD_ATTRIBUTE_UNMANAGED_EXPORT     = 0x0008;
-inline constexpr uint32_t METHOD_ATTRIBUTE_RESERVED_MASK        = 0xd000;
-inline constexpr uint32_t METHOD_ATTRIBUTE_RT_SPECIAL_NAME      = 0x1000;
-inline constexpr uint32_t METHOD_ATTRIBUTE_HAS_SECURITY         = 0x4000;
-inline constexpr uint32_t METHOD_ATTRIBUTE_REQUIRE_SEC_OBJECT   = 0x8000;
+inline constexpr uint32_t METHOD_ATTRIBUTE_MEMBER_ACCESS_MASK   = 0x0007u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_COMPILER_CONTROLLED  = 0x0000u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_PRIVATE              = 0x0001u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_FAM_AND_ASSEM        = 0x0002u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_ASSEM                = 0x0003u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_FAMILY               = 0x0004u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_FAM_OR_ASSEM         = 0x0005u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_PUBLIC               = 0x0006u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_STATIC               = 0x0010u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_FINAL                = 0x0020u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_VIRTUAL              = 0x0040u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_HIDE_BY_SIG          = 0x0080u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK   = 0x0100u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_REUSE_SLOT           = 0x0000u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_NEW_SLOT             = 0x0100u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_STRICT               = 0x0200u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_ABSTRACT             = 0x0400u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_SPECIAL_NAME         = 0x0800u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_PINVOKE_IMPL         = 0x2000u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_UNMANAGED_EXPORT     = 0x0008u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_RESERVED_MASK        = 0xd000u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_RT_SPECIAL_NAME      = 0x1000u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_HAS_SECURITY         = 0x4000u;
+inline constexpr uint32_t METHOD_ATTRIBUTE_REQUIRE_SEC_OBJECT   = 0x8000u;
 
-inline constexpr uint32_t TYPE_ATTRIBUTE_VISIBILITY_MASK        = 0x00000007;
-inline constexpr uint32_t TYPE_ATTRIBUTE_NOT_PUBLIC             = 0x00000000;
-inline constexpr uint32_t TYPE_ATTRIBUTE_PUBLIC                 = 0x00000001;
-inline constexpr uint32_t TYPE_ATTRIBUTE_NESTED_PUBLIC          = 0x00000002;
-inline constexpr uint32_t TYPE_ATTRIBUTE_NESTED_PRIVATE         = 0x00000003;
-inline constexpr uint32_t TYPE_ATTRIBUTE_NESTED_FAMILY          = 0x00000004;
-inline constexpr uint32_t TYPE_ATTRIBUTE_NESTED_ASSEMBLY        = 0x00000005;
-inline constexpr uint32_t TYPE_ATTRIBUTE_NESTED_FAM_AND_ASSEM   = 0x00000006;
-inline constexpr uint32_t TYPE_ATTRIBUTE_NESTED_FAM_OR_ASSEM    = 0x00000007;
-inline constexpr uint32_t TYPE_ATTRIBUTE_LAYOUT_MASK            = 0x00000018;
-inline constexpr uint32_t TYPE_ATTRIBUTE_AUTO_LAYOUT            = 0x00000000;
-inline constexpr uint32_t TYPE_ATTRIBUTE_SEQUENTIAL_LAYOUT      = 0x00000008;
-inline constexpr uint32_t TYPE_ATTRIBUTE_EXPLICIT_LAYOUT        = 0x00000010;
-inline constexpr uint32_t TYPE_ATTRIBUTE_CLASS_SEMANTIC_MASK    = 0x00000020;
-inline constexpr uint32_t TYPE_ATTRIBUTE_CLASS                  = 0x00000000;
-inline constexpr uint32_t TYPE_ATTRIBUTE_INTERFACE              = 0x00000020;
-inline constexpr uint32_t TYPE_ATTRIBUTE_ABSTRACT               = 0x00000080;
-inline constexpr uint32_t TYPE_ATTRIBUTE_SEALED                 = 0x00000100;
-inline constexpr uint32_t TYPE_ATTRIBUTE_SPECIAL_NAME           = 0x00000400;
-inline constexpr uint32_t TYPE_ATTRIBUTE_IMPORT                 = 0x00001000;
-inline constexpr uint32_t TYPE_ATTRIBUTE_SERIALIZABLE           = 0x00002000;
-inline constexpr uint32_t TYPE_ATTRIBUTE_STRING_FORMAT_MASK     = 0x00030000;
-inline constexpr uint32_t TYPE_ATTRIBUTE_ANSI_CLASS             = 0x00000000;
-inline constexpr uint32_t TYPE_ATTRIBUTE_UNICODE_CLASS          = 0x00010000;
-inline constexpr uint32_t TYPE_ATTRIBUTE_AUTO_CLASS             = 0x00020000;
-inline constexpr uint32_t TYPE_ATTRIBUTE_BEFORE_FIELD_INIT      = 0x00100000;
-inline constexpr uint32_t TYPE_ATTRIBUTE_FORWARDER              = 0x00200000;
-inline constexpr uint32_t TYPE_ATTRIBUTE_RESERVED_MASK          = 0x00040800;
-inline constexpr uint32_t TYPE_ATTRIBUTE_RT_SPECIAL_NAME        = 0x00000800;
-inline constexpr uint32_t TYPE_ATTRIBUTE_HAS_SECURITY           = 0x00040000;
+inline constexpr uint32_t TYPE_ATTRIBUTE_VISIBILITY_MASK        = 0x00000007u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_NOT_PUBLIC             = 0x00000000u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_PUBLIC                 = 0x00000001u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_NESTED_PUBLIC          = 0x00000002u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_NESTED_PRIVATE         = 0x00000003u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_NESTED_FAMILY          = 0x00000004u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_NESTED_ASSEMBLY        = 0x00000005u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_NESTED_FAM_AND_ASSEM   = 0x00000006u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_NESTED_FAM_OR_ASSEM    = 0x00000007u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_LAYOUT_MASK            = 0x00000018u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_AUTO_LAYOUT            = 0x00000000u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_SEQUENTIAL_LAYOUT      = 0x00000008u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_EXPLICIT_LAYOUT        = 0x00000010u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_CLASS_SEMANTIC_MASK    = 0x00000020u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_CLASS                  = 0x00000000u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_INTERFACE              = 0x00000020u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_ABSTRACT               = 0x00000080u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_SEALED                 = 0x00000100u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_SPECIAL_NAME           = 0x00000400u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_IMPORT                 = 0x00001000u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_SERIALIZABLE           = 0x00002000u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_STRING_FORMAT_MASK     = 0x00030000u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_ANSI_CLASS             = 0x00000000u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_UNICODE_CLASS          = 0x00010000u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_AUTO_CLASS             = 0x00020000u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_BEFORE_FIELD_INIT      = 0x00100000u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_FORWARDER              = 0x00200000u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_RESERVED_MASK          = 0x00040800u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_RT_SPECIAL_NAME        = 0x00000800u;
+inline constexpr uint32_t TYPE_ATTRIBUTE_HAS_SECURITY           = 0x00040000u;
 
-inline constexpr uint32_t PARAM_ATTRIBUTE_IN                = 0x0001;
-inline constexpr uint32_t PARAM_ATTRIBUTE_OUT               = 0x0002;
-inline constexpr uint32_t PARAM_ATTRIBUTE_OPTIONAL          = 0x0010;
-inline constexpr uint32_t PARAM_ATTRIBUTE_RESERVED_MASK     = 0xf000;
-inline constexpr uint32_t PARAM_ATTRIBUTE_HAS_DEFAULT       = 0x1000;
-inline constexpr uint32_t PARAM_ATTRIBUTE_HAS_FIELD_MARSHAL = 0x2000;
-inline constexpr uint32_t PARAM_ATTRIBUTE_UNUSED            = 0xcfe0;
+inline constexpr uint32_t PARAM_ATTRIBUTE_IN                = 0x0001u;
+inline constexpr uint32_t PARAM_ATTRIBUTE_OUT               = 0x0002u;
+inline constexpr uint32_t PARAM_ATTRIBUTE_OPTIONAL          = 0x0010u;
+inline constexpr uint32_t PARAM_ATTRIBUTE_RESERVED_MASK     = 0xf000u;
+inline constexpr uint32_t PARAM_ATTRIBUTE_HAS_DEFAULT       = 0x1000u;
+inline constexpr uint32_t PARAM_ATTRIBUTE_HAS_FIELD_MARSHAL = 0x2000u;
+inline constexpr uint32_t PARAM_ATTRIBUTE_UNUSED            = 0xcfe0u;
 
-inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_NON_VARIANT                        = 0x00;
-inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_COVARIANT                          = 0x01;
-inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_CONTRAVARIANT                      = 0x02;
-inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_VARIANCE_MASK                      = 0x03;
-inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_REFERENCE_TYPE_CONSTRAINT          = 0x04;
-inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_NOT_NULLABLE_VALUE_TYPE_CONSTRAINT = 0x08;
-inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_DEFAULT_CONSTRUCTOR_CONSTRAINT     = 0x10;
-inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_SPECIAL_CONSTRAINT_MASK            = 0x1C;
+inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_NON_VARIANT                        = 0x00u;
+inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_COVARIANT                          = 0x01u;
+inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_CONTRAVARIANT                      = 0x02u;
+inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_VARIANCE_MASK                      = 0x03u;
+inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_REFERENCE_TYPE_CONSTRAINT          = 0x04u;
+inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_NOT_NULLABLE_VALUE_TYPE_CONSTRAINT = 0x08u;
+inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_DEFAULT_CONSTRUCTOR_CONSTRAINT     = 0x10u;
+inline constexpr uint32_t IL2CPP_GENERIC_PARAMETER_ATTRIBUTE_SPECIAL_CONSTRAINT_MASK            = 0x1Cu;
 
-inline constexpr uint32_t ASSEMBLYREF_FULL_PUBLIC_KEY_FLAG             = 0x00000001;
-inline constexpr uint32_t ASSEMBLYREF_RETARGETABLE_FLAG                = 0x00000100;
-inline constexpr uint32_t ASSEMBLYREF_ENABLEJITCOMPILE_TRACKING_FLAG   = 0x00008000;
-inline constexpr uint32_t ASSEMBLYREF_DISABLEJITCOMPILE_OPTIMIZER_FLAG = 0x00004000;
+inline constexpr uint32_t ASSEMBLYREF_FULL_PUBLIC_KEY_FLAG             = 0x00000001u;
+inline constexpr uint32_t ASSEMBLYREF_RETARGETABLE_FLAG                = 0x00000100u;
+inline constexpr uint32_t ASSEMBLYREF_ENABLEJITCOMPILE_TRACKING_FLAG   = 0x00008000u;
+inline constexpr uint32_t ASSEMBLYREF_DISABLEJITCOMPILE_OPTIMIZER_FLAG = 0x00004000u;
 
 using Il2CppChar            = uint16_t;
 using il2cpp_array_size_t   = uintptr_t;
@@ -183,7 +185,7 @@ struct Il2CppDebuggerTransport;
 struct Il2CppMethodDebugInfo;
 struct Il2CppCustomAttrInfo;
 
-using Il2CppVTable = Il2CppClass;
+using Il2CppVTable                        = Il2CppClass;
 using Il2CppMethodPointer                 = void (*)();
 using il2cpp_register_object_callback     = void (*)(Il2CppObject** arr, int size, void* userdata);
 using il2cpp_liveness_reallocate_callback = void* (*)(void* ptr, size_t size, void* userdata);
@@ -464,7 +466,7 @@ inline constexpr std::array<std::string_view, 18> kSystemProcessNames = {{
 
 namespace entropy {
 
-inline constexpr uint32_t kIl2CppMetadataMagic = 0xFAB11BAF;
+inline constexpr uint32_t kIl2CppMetadataMagic = 0xFAB11BAFu;
 
 enum class MetadataState { Plain, Encrypted };
 
@@ -641,9 +643,9 @@ struct ResolvedSymbols {
 };
 
 [[nodiscard]] static std::optional<MappedRegion> resolveExecutableRegion(uintptr_t base) {
-    constexpr size_t kMaxScanSize = 0x8000000;
+    constexpr size_t kMaxScanSize = 0x8000000u;
     auto page = static_cast<uintptr_t>(getpagesize());
-    return MappedRegion{ base & ~(page - 1), kMaxScanSize };
+    return MappedRegion{ base & ~(page - 1u), kMaxScanSize };
 }
 
 template<size_t N>
@@ -651,7 +653,7 @@ template<size_t N>
     const MappedRegion& region, const Pattern<N>& pattern, size_t alignment = 4
 ) {
     auto* mem   = reinterpret_cast<const uint8_t*>(region.base);
-    auto  limit = (region.size > N) ? (region.size - N) : 0;
+    auto  limit = (region.size > N) ? (region.size - N) : 0u;
     for (size_t off = 0; off < limit; off += alignment) {
         bool matched = true;
         for (size_t i = 0; i < N; ++i) {
@@ -669,7 +671,7 @@ template<size_t N, size_t kAnchorBytes = 4>
 ) {
     static_assert(kAnchorBytes <= N);
     auto* mem   = reinterpret_cast<const uint8_t*>(region.base);
-    auto  limit = (region.size > N) ? (region.size - N) : 0;
+    auto  limit = (region.size > N) ? (region.size - N) : 0u;
     for (size_t off = 0; off < limit; off += alignment) {
         bool matched = true;
         for (size_t i = 0; i < kAnchorBytes; ++i) {
@@ -686,9 +688,9 @@ template<size_t N, size_t kAnchorBytes = 4>
     const std::vector<uint32_t>& known_hashes,
     size_t alignment = 4
 ) {
-    constexpr size_t kWindowSize = 16;
+    constexpr size_t kWindowSize = 16u;
     auto* mem   = reinterpret_cast<const uint8_t*>(region.base);
-    auto  limit = (region.size > kWindowSize) ? (region.size - kWindowSize) : 0;
+    auto  limit = (region.size > kWindowSize) ? (region.size - kWindowSize) : 0u;
     for (size_t off = 0; off < limit; off += alignment) {
         uint32_t hash = 2166136261u;
         for (size_t i = 0; i < kWindowSize; ++i) {
@@ -714,7 +716,7 @@ namespace known_hashes {
 [[nodiscard]] static bool isReadableAddress(uintptr_t address) {
     if (address == 0) return false;
     auto page    = static_cast<uintptr_t>(getpagesize());
-    auto aligned = reinterpret_cast<void*>(address & ~(page - 1));
+    auto aligned = reinterpret_cast<void*>(address & ~(page - 1u));
     return msync(aligned, page, MS_ASYNC) == 0;
 }
 
@@ -926,10 +928,18 @@ struct DumperConfig {
     return cfg;
 }
 
+[[nodiscard]] static bool isExplicitTarget(const DumperConfig& cfg) noexcept {
+    return !cfg.Target_Game.empty() && cfg.Target_Game != "!";
+}
+
+[[nodiscard]] static bool isWildcardTarget(const DumperConfig& cfg) noexcept {
+    return cfg.Target_Game == "!";
+}
+
 [[nodiscard]] static bool isTargetPackage(const DumperConfig& cfg, std::string_view pkg) {
-    if (cfg.Target_Game == "!")
+    if (isWildcardTarget(cfg))
         return true;
-    return !cfg.Target_Game.empty() && cfg.Target_Game == pkg;
+    return isExplicitTarget(cfg) && cfg.Target_Game == pkg;
 }
 
 using HotReloadCallback = std::function<void(const DumperConfig&)>;
