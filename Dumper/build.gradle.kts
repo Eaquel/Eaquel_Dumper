@@ -31,8 +31,7 @@ android {
                     "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
                     "-DCMAKE_BUILD_TYPE=Release"
                 )
-                cppFlags("-std=c++23")
-                abiFilters("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+                abiFilters("arm64-v8a", "armeabi-v7a")
             }
         }
     }
@@ -52,7 +51,7 @@ android {
 
     externalNativeBuild {
         cmake {
-            path    = file("Source/Main/Native/CMakeLists.txt")
+            path = file("Source/Main/Native/CMakeLists.txt")
         }
     }
 
@@ -69,9 +68,9 @@ androidComponents {
         val variantLower  = variant.name.lowercase()
         val skeletonDir   = outDir
 
-        val skeletonLibDir    = skeletonDir.resolve("lib")
-        val skeletonZygiskDir = skeletonDir.resolve("zygisk")
-        val capturedLibName   = moduleLibraryName
+        val skeletonLibDir      = skeletonDir.resolve("lib")
+        val skeletonZygiskDir   = skeletonDir.resolve("zygisk")
+        val capturedLibName     = moduleLibraryName
 
         val prepareTask = tasks.register<Sync>("prepareSkeleton$variantCapped") {
             dependsOn("strip${variantCapped}DebugSymbols")

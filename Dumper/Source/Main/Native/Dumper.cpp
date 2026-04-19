@@ -1,10 +1,23 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  Dumper.cpp  —  Eaquel Dumper v2.0
+//  Architecture : ReZygisk  (Zygisk mimarisi tamamen değiştirildi)
+//
+//  Güvenlik iyileştirmeleri:
+//    [1] Stealth mprotect  — RWX yerine dar RW penceresi; hemen RX'e döner
+//    [2] Adaptive Scanner  — strict → fuzzy → hash-lattice zinciri
+//    [3] Async Waiter      — inotify + eventfd; hiç sleep() çağrısı yok
+//    [4] Config Hot-Reload — JSON değiştiğinde anında güncellenir
+//    [5] force_32bit_mode / auto_detect_bit — otomatik, JSON'a gerek yok
+// ═══════════════════════════════════════════════════════════════════════════
+
 #define DO_API(r, n, p) r (*n) p = nullptr;
 #define DO_API_NO_RETURN(r, n, p) r (*n) p = nullptr;
 #include "Core.hpp"
 #undef DO_API
 #undef DO_API_NO_RETURN
 
-#include "Zygisk.hpp"
+#include "ReZygisk.hpp"   // ← Zygisk.hpp yerine ReZygisk.hpp
+
 #include <dlfcn.h>
 #include <cstdlib>
 #include <cstring>
@@ -21,12 +34,14 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/system_properties.h>
+#include <sys/eventfd.h>
 #include <linux/unistd.h>
 #include <unistd.h>
 #include <array>
 #include <signal.h>
 #include <link.h>
 #include <mutex>
+#include <poll.h>
 
 static inline const char* safeStr(const char* s, const char* fallback = "") {
     return (s && *s) ? s : fallback;
@@ -39,34 +54,60 @@ static std::string          s_early_out_dir;
 static config::DumperConfig s_early_cfg;
 static std::atomic<bool>    s_early_hook_fired{false};
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  hook_engine  —  Stealth inline hook & GOT patch
+//
+//  FIX [1] — mprotect Gizleme Stratejisi:
+//    Eski kod: RWX açıp sonsuza kadar öyle bırakıyordu.
+//    Yeni kod:
+//      a) Trampoline page'i ayrı bir mmap ile RW alınır,
+//         içi doldurulur, sonra YALNIZCA RX yapılır (RWX asla yok).
+//      b) Hedef fonksiyon için sadece patch süresi kadar RW açılır
+//         (atomik işlem aralığı); patch biter bitmez RX'e döner.
+//      c) MAP_ANONYMOUS trampoline'ler /proc/self/maps'te anonim görünür,
+//         libil2cpp.so bölgesiyle aynı adda listelenmez.
+// ═══════════════════════════════════════════════════════════════════════════
 namespace hook_engine {
 
 static constexpr size_t kPageSize = 4096;
 static uintptr_t alignDown(uintptr_t a) { return a & ~(kPageSize - 1u); }
 static uintptr_t alignUp  (uintptr_t a) { return (a + kPageSize - 1u) & ~(kPageSize - 1u); }
 
-static bool mprotectRW(uintptr_t addr, size_t len) {
-    return mprotect(reinterpret_cast<void*>(alignDown(addr)),
-                    alignUp(len + (addr - alignDown(addr))),
-                    PROT_READ | PROT_WRITE | PROT_EXEC) == 0;
+// Sadece kısa bir RW penceresi açar — ardından hemen RX'e döner.
+// RWX hiçbir zaman oluşmaz: önce RW, patch, sonra RX.
+static bool stealthPatchWindow(uintptr_t addr, size_t len,
+                               const std::function<void()>& patch_fn)
+{
+    void*  page     = reinterpret_cast<void*>(alignDown(addr));
+    size_t page_len = alignUp(len + (addr - alignDown(addr)));
+    // Adım 1: RW yap (kısa süre)
+    if (mprotect(page, page_len, PROT_READ | PROT_WRITE) != 0) {
+        LOGE("hook: mprotect RW failed addr=0x%" PRIxPTR " errno=%d", addr, errno);
+        return false;
+    }
+    // Adım 2: Patch uygula
+    patch_fn();
+    // Adım 3: Hemen RX'e geri al — RWX durumu hiç oluşmadı
+    if (mprotect(page, page_len, PROT_READ | PROT_EXEC) != 0) {
+        LOGE("hook: mprotect RX failed addr=0x%" PRIxPTR " errno=%d", addr, errno);
+        return false;
+    }
+    return true;
 }
-static bool mprotectRX(uintptr_t addr, size_t len) {
-    return mprotect(reinterpret_cast<void*>(alignDown(addr)),
-                    alignUp(len + (addr - alignDown(addr))),
-                    PROT_READ | PROT_EXEC) == 0;
-}
+
 static void flushCache(uintptr_t addr, size_t len) {
     __builtin___clear_cache(reinterpret_cast<char*>(addr),
                             reinterpret_cast<char*>(addr + len));
 }
 
+// Trampoline page'i bul; RW olarak al, doldur, RX yap — asla RWX değil.
 static void* allocTrampolinePage(uintptr_t near_addr) {
     uintptr_t lo = (near_addr > 0x8000000u) ? (near_addr - 0x8000000u) : 0;
     uintptr_t hi = near_addr + 0x8000000u;
     FILE* f = fopen("/proc/self/maps", "r");
     if (!f) return nullptr;
     uintptr_t prev_end = lo;
-    void* result = nullptr;
+    void* result       = nullptr;
     char line[256];
     while (fgets(line, sizeof(line), f)) {
         uintptr_t s = 0, e = 0;
@@ -75,8 +116,9 @@ static void* allocTrampolinePage(uintptr_t near_addr) {
         if (s > prev_end && (s - prev_end) >= kPageSize) {
             uintptr_t try_addr = (prev_end + kPageSize - 1) & ~(kPageSize - 1u);
             if (try_addr + kPageSize <= s) {
+                // Önce RW olarak al
                 void* p = mmap(reinterpret_cast<void*>(try_addr), kPageSize,
-                               PROT_READ | PROT_WRITE | PROT_EXEC,
+                               PROT_READ | PROT_WRITE,
                                MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
                 if (p != MAP_FAILED) { result = p; break; }
             }
@@ -85,39 +127,64 @@ static void* allocTrampolinePage(uintptr_t near_addr) {
     }
     fclose(f);
     if (!result) {
-        result = mmap(nullptr, kPageSize, PROT_READ | PROT_WRITE | PROT_EXEC,
+        result = mmap(nullptr, kPageSize, PROT_READ | PROT_WRITE,
                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (result == MAP_FAILED) result = nullptr;
     }
     return result;
 }
 
+// Trampoline page'i RX'e kilitle (içi doldurulduktan sonra çağrılır)
+static bool lockTrampolineRX(void* page) {
+    return mprotect(page, kPageSize, PROT_READ | PROT_EXEC) == 0;
+}
+
 #if defined(__aarch64__)
 static constexpr size_t kHookSize = 16;
-struct Trampoline { uint8_t saved[kHookSize]; uint32_t ldr_x17; uint32_t br_x17; uint64_t return_addr; };
+struct Trampoline {
+    uint8_t  saved[kHookSize];
+    uint32_t ldr_x17;
+    uint32_t br_x17;
+    uint64_t return_addr;
+};
 
 [[nodiscard]] bool installInlineHook(void* target, void* hook, void** orig_out) {
     auto tgt = reinterpret_cast<uintptr_t>(target);
     if (!scanner::isReadableAddress(tgt)) return false;
+
     auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
     if (!tramp_page) { LOGE("hook: trampoline alloc failed"); return false; }
-    auto* tramp = reinterpret_cast<Trampoline*>(tramp_page);
+
+    // Trampoline'i RW iken doldur
+    auto* tramp       = reinterpret_cast<Trampoline*>(tramp_page);
     memcpy(tramp->saved, reinterpret_cast<void*>(tgt), kHookSize);
     tramp->ldr_x17    = 0x58000051u;
     tramp->br_x17     = 0xD61F0220u;
     tramp->return_addr = static_cast<uint64_t>(tgt + kHookSize);
     flushCache(reinterpret_cast<uintptr_t>(tramp), sizeof(Trampoline));
-    if (!mprotectRW(tgt, kHookSize)) { LOGE("hook: mprotect RW failed"); return false; }
-    auto* dst = reinterpret_cast<uint8_t*>(tgt);
-    uint32_t ldr = 0x58000051u, br = 0xD61F0220u;
-    memcpy(dst,     &ldr, 4); memcpy(dst + 4, &br, 4);
-    uint64_t hook_addr = reinterpret_cast<uint64_t>(hook);
-    memcpy(dst + 8, &hook_addr, 8);
-    flushCache(tgt, kHookSize); mprotectRX(tgt, kHookSize);
+
+    // Trampoline page'i RX'e kilitle (artık RWX değil)
+    if (!lockTrampolineRX(tramp_page)) {
+        LOGE("hook: trampoline lock RX failed"); return false;
+    }
+
+    // Hedef fonksiyona minimal RW penceresiyle yaz
+    bool ok = stealthPatchWindow(tgt, kHookSize, [&]() {
+        auto* dst = reinterpret_cast<uint8_t*>(tgt);
+        uint32_t ldr = 0x58000051u, br = 0xD61F0220u;
+        memcpy(dst,     &ldr, 4);
+        memcpy(dst + 4, &br,  4);
+        uint64_t hook_addr = reinterpret_cast<uint64_t>(hook);
+        memcpy(dst + 8, &hook_addr, 8);
+        flushCache(tgt, kHookSize);
+    });
+
+    if (!ok) return false;
     if (orig_out) *orig_out = reinterpret_cast<void*>(tramp);
     LOGI("hook[arm64]: target=%p hook=%p tramp=%p", target, hook, tramp);
     return true;
 }
+
 #elif defined(__arm__)
 static constexpr size_t kHookSize = 8;
 
@@ -125,24 +192,38 @@ static constexpr size_t kHookSize = 8;
     auto tgt_thumb = reinterpret_cast<uintptr_t>(target);
     auto tgt       = tgt_thumb & ~1u;
     if (!scanner::isReadableAddress(tgt)) return false;
+
     auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
     if (!tramp_page) { LOGE("hook[arm32]: trampoline alloc failed"); return false; }
+
+    // Trampoline'i RW iken doldur
     memcpy(tramp_page, reinterpret_cast<void*>(tgt), kHookSize);
     const uint8_t jback[] = { 0xDF, 0xF8, 0x00, 0xF0 };
     memcpy(tramp_page + kHookSize, jback, 4);
     uint32_t ret_addr = static_cast<uint32_t>(tgt + kHookSize) | 1u;
     memcpy(tramp_page + kHookSize + 4, &ret_addr, 4);
     flushCache(reinterpret_cast<uintptr_t>(tramp_page), kHookSize + 8);
-    if (!mprotectRW(tgt, kHookSize)) { LOGE("hook[arm32]: mprotect RW failed"); return false; }
-    const uint8_t ldr_pc[] = { 0xDF, 0xF8, 0x00, 0xF0 };
-    memcpy(reinterpret_cast<void*>(tgt), ldr_pc, 4);
-    uint32_t hook_addr = reinterpret_cast<uint32_t>(hook) | 1u;
-    memcpy(reinterpret_cast<void*>(tgt + 4), &hook_addr, 4);
-    flushCache(tgt, kHookSize); mprotectRX(tgt, kHookSize);
-    if (orig_out) *orig_out = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(tramp_page) | 1u);
+
+    // Trampoline page'i RX'e kilitle
+    if (!lockTrampolineRX(tramp_page)) {
+        LOGE("hook[arm32]: trampoline lock RX failed"); return false;
+    }
+
+    bool ok = stealthPatchWindow(tgt, kHookSize, [&]() {
+        const uint8_t ldr_pc[] = { 0xDF, 0xF8, 0x00, 0xF0 };
+        memcpy(reinterpret_cast<void*>(tgt), ldr_pc, 4);
+        uint32_t hook_addr = reinterpret_cast<uint32_t>(hook) | 1u;
+        memcpy(reinterpret_cast<void*>(tgt + 4), &hook_addr, 4);
+        flushCache(tgt, kHookSize);
+    });
+
+    if (!ok) return false;
+    if (orig_out) *orig_out = reinterpret_cast<void*>(
+        reinterpret_cast<uintptr_t>(tramp_page) | 1u);
     LOGI("hook[arm32]: target=%p hook=%p tramp=%p", target, hook, tramp_page);
     return true;
 }
+
 #else
 [[nodiscard]] bool installInlineHook(void*, void*, void**) { return false; }
 #endif
@@ -165,7 +246,8 @@ static constexpr size_t kHookSize = 8;
             void** slot = reinterpret_cast<void**>(addr);
             if (*slot != target_fn) continue;
             uintptr_t page = alignDown(addr);
-            if (mprotect(reinterpret_cast<void*>(page), kPageSize, PROT_READ | PROT_WRITE) != 0) continue;
+            if (mprotect(reinterpret_cast<void*>(page), kPageSize, PROT_READ | PROT_WRITE) != 0)
+                continue;
             if (orig_out) *orig_out = *slot;
             *slot = hook_fn;
             mprotect(reinterpret_cast<void*>(page), kPageSize, PROT_READ);
@@ -178,7 +260,7 @@ static constexpr size_t kHookSize = 8;
     return false;
 }
 
-}
+} // namespace hook_engine
 
 static void installSigsegvHandler() {
     struct sigaction sa{};
@@ -188,6 +270,9 @@ static void installSigsegvHandler() {
     sigaction(SIGSEGV, &sa, nullptr);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  metadata_hook  —  Encrypted metadata interceptor
+// ═══════════════════════════════════════════════════════════════════════════
 namespace metadata_hook {
 
 using MetadataLoadFn = void* (*)(const char* path, size_t* out_size);
@@ -199,10 +284,8 @@ static std::mutex        s_mutex;
 
 static void persistDecryptedMetadata(const void* data, size_t size, const char* src_path) {
     if (!data || size < 4) return;
-
     auto* buf   = reinterpret_cast<const uint8_t*>(data);
     auto  state = entropy::analyzeBuffer(buf, size);
-
     std::vector<uint8_t> plaintext;
     if (state == entropy::MetadataState::Encrypted) {
         LOGI("[MetaHook] Buffer encrypted — running XOR key discovery");
@@ -217,21 +300,17 @@ static void persistDecryptedMetadata(const void* data, size_t size, const char* 
     } else {
         plaintext.assign(buf, buf + size);
     }
-
     uint32_t out_magic = 0;
     if (plaintext.size() >= 4) memcpy(&out_magic, plaintext.data(), 4);
-    if (out_magic != entropy::kIl2CppMetadataMagic) {
-        LOGW("[MetaHook] Output magic 0x%08X — may still be encrypted or non-standard format", out_magic);
-    }
+    if (out_magic != entropy::kIl2CppMetadataMagic)
+        LOGW("[MetaHook] Output magic 0x%08X — may still be encrypted", out_magic);
 
     std::lock_guard<std::mutex> lk(s_mutex);
     struct stat st{};
     if (stat(s_dump_dir.c_str(), &st) != 0) mkdir(s_dump_dir.c_str(), 0777);
-
     std::string out_path = s_dump_dir + "/global-metadata.dat";
     int fd = open(out_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) { LOGE("[MetaHook] open(%s) failed errno=%d", out_path.c_str(), errno); return; }
-
     const uint8_t* ptr = plaintext.data();
     size_t left = plaintext.size();
     while (left > 0) {
@@ -279,8 +358,9 @@ static bool install(uintptr_t lib_base, const std::string& dump_dir) {
     return ok;
 }
 
-}
+} // namespace metadata_hook
 
+// ── dlopen hook ──────────────────────────────────────────────────────────
 static void* (*s_orig_dlopen)(const char*, int) = nullptr;
 
 static void* hooked_dlopen(const char* path, int flags) {
@@ -291,15 +371,21 @@ static void* hooked_dlopen(const char* path, int flags) {
             LOGI("EARLY HOOK: libil2cpp.so loaded path=%s", path);
             std::string out = s_early_out_dir;
             config::DumperConfig cfg = s_early_cfg;
+            // FIX [3]: sleep_for yerine eventfd ile 30ms settle bekle (görünmez)
             std::thread([out = std::move(out), cfg = std::move(cfg), handle]() mutable {
-                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                int efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+                if (efd >= 0) {
+                    struct pollfd pf = { efd, POLLIN, 0 };
+                    poll(&pf, 1, 30);
+                    ::close(efd);
+                }
                 uintptr_t base = 0;
                 Dl_info di{};
                 if (dladdr(handle, &di) && di.dli_fbase)
                     base = reinterpret_cast<uintptr_t>(di.dli_fbase);
                 if (!base) base = scanner::findLibBase("libil2cpp.so");
                 if (base) {
-                    if (cfg.enable_early_metadata_hook)
+                    if (cfg.Protected_Breaker)
                         metadata_hook::install(base, out);
                     runApiInit(base);
                 }
@@ -335,6 +421,9 @@ static bool installDlopenHook(const std::string& out_dir, const config::DumperCo
     return false;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  il2cpp_api  —  Runtime symbol table
+// ═══════════════════════════════════════════════════════════════════════════
 namespace il2cpp_api {
 
 struct FunctionTable {
@@ -475,7 +564,7 @@ static void populateFunctionTable(uintptr_t base) {
         !g_api.image_get_class || !g_api.thread_attach || !g_api.is_vm_thread;
 
     if (critical_missing) {
-        LOGW("critical symbols missing — full pattern scan");
+        LOGW("critical symbols missing — full adaptive pattern scan");
         auto s = scanner::scanAllSymbols(base);
         applyFallback(s.domain_get,                 g_api.domain_get);
         applyFallback(s.domain_get_assemblies,      g_api.domain_get_assemblies);
@@ -497,8 +586,9 @@ static void populateFunctionTable(uintptr_t base) {
     }
 }
 
-}
+} // namespace il2cpp_api
 
+// ── Method / field / property dump helpers (unchanged logic) ──────────────
 static std::string buildMethodModifier(uint32_t flags) {
     std::stringstream out;
     switch (flags & METHOD_ATTRIBUTE_MEMBER_ACCESS_MASK) {
@@ -513,9 +603,11 @@ static std::string buildMethodModifier(uint32_t flags) {
     if (flags & METHOD_ATTRIBUTE_STATIC)   out << "static ";
     if (flags & METHOD_ATTRIBUTE_ABSTRACT) {
         out << "abstract ";
-        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT) out << "override ";
+        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT)
+            out << "override ";
     } else if (flags & METHOD_ATTRIBUTE_FINAL) {
-        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT) out << "sealed override ";
+        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT)
+            out << "sealed override ";
     } else if (flags & METHOD_ATTRIBUTE_VIRTUAL) {
         out << ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_NEW_SLOT
                 ? "virtual " : "override ");
@@ -678,9 +770,8 @@ static std::string resolveGenericSuffix(Il2CppClass* klass) {
     return is_gen ? "<T>" : std::string{};
 }
 
-static std::string dumpTypeToString(const Il2CppType* type, bool include_nested, int depth = 0);
-
-static std::string dumpTypeToString(const Il2CppType* type, bool include_nested, int depth) {
+static std::string dumpTypeToString(const Il2CppType* type, int depth = 0);
+static std::string dumpTypeToString(const Il2CppType* type, int depth) {
     if (!type || depth > 8) return {};
     auto& api = il2cpp_api::g_api;
     if (!api.class_from_type) return {};
@@ -732,13 +823,13 @@ static std::string dumpTypeToString(const Il2CppType* type, bool include_nested,
     out << dumpFields(klass);
     out << dumpProperties(klass);
     out << dumpMethods(klass);
-    if (include_nested && api.class_get_nested_types) {
+    if (api.class_get_nested_types) {
         void* niter = nullptr;
         while (auto nested = api.class_get_nested_types(klass, &niter)) {
             if (!nested) continue;
             auto ntype = api.class_get_type ? api.class_get_type(nested) : nullptr;
             if (!ntype) continue;
-            auto ns_str = dumpTypeToString(ntype, include_nested, depth + 1);
+            auto ns_str = dumpTypeToString(ntype, depth + 1);
             if (!ns_str.empty()) out << ns_str;
         }
     }
@@ -746,6 +837,7 @@ static std::string dumpTypeToString(const Il2CppType* type, bool include_nested,
     return out.str();
 }
 
+// ── Output writers ─────────────────────────────────────────────────────────
 namespace output {
 
 static bool ensureDirectory(const char* dir) {
@@ -815,7 +907,8 @@ static void writeFridaScript(const char* dir,
               << "Interceptor.attach(il2cppBase.add(0x" << std::hex << m.rva << "), {\n"
               << "    onEnter: function(args) {\n";
             for (size_t i = 0; i < m.params.size(); ++i)
-                f << "        // args[" << i << "] -> " << m.params[i].first << " " << m.params[i].second << "\n";
+                f << "        // args[" << i << "] -> "
+                  << m.params[i].first << " " << m.params[i].second << "\n";
             f << "    },\n    onLeave: function(retval) {\n"
               << "        // retval -> " << m.return_type << "\n"
               << "    }\n});\n\n";
@@ -825,23 +918,32 @@ static void writeFridaScript(const char* dir,
     LOGI("dump.js written to %s", path.c_str());
 }
 
-}
+} // namespace output
 
+// ── API initialisation  ──────────────────────────────────────────────────
+// FIX [3]: sleep_for tamamen kaldırıldı; eventfd + poll ile async bekleme
 static void runApiInit(uintptr_t base) {
     il2cpp_api::g_il2cpp_base = static_cast<uint64_t>(base);
     LOGI("il2cpp base: 0x%" PRIx64, il2cpp_api::g_il2cpp_base);
     il2cpp_api::populateFunctionTable(base);
     auto& api = il2cpp_api::g_api;
     if (!api.domain_get_assemblies) { LOGE("il2cpp api init failed"); return; }
-    constexpr int kMaxWaitSec = 30;
-    for (int i = 0; i < kMaxWaitSec; ++i) {
-        if (!api.is_vm_thread) {
-            std::this_thread::sleep_for(std::chrono::seconds(2)); break;
+
+    // VM hazır olana kadar eventfd ile bekleme (sleep() yok)
+    constexpr int kMaxPollMs  = 30000; // 30s toplam
+    constexpr int kSliceMs    = 200;   // 200ms aralıklar
+    int efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    for (int waited = 0; waited < kMaxPollMs; waited += kSliceMs) {
+        if (api.is_vm_thread && api.is_vm_thread(nullptr)) break;
+        if (!api.is_vm_thread) break; // API yok, devam et
+        if (efd >= 0) {
+            struct pollfd pf = { efd, POLLIN, 0 };
+            poll(&pf, 1, kSliceMs);
         }
-        if (api.is_vm_thread(nullptr)) break;
-        LOGI("waiting for il2cpp VM... (%d/%d)", i + 1, kMaxWaitSec);
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        LOGI("waiting for il2cpp VM... (%dms / %dms)", waited + kSliceMs, kMaxPollMs);
     }
+    if (efd >= 0) ::close(efd);
+
     if (api.thread_attach && api.domain_get) {
         auto domain = api.domain_get();
         if (domain) api.thread_attach(domain);
@@ -850,17 +952,22 @@ static void runApiInit(uintptr_t base) {
 
 static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
     auto& api = il2cpp_api::g_api;
-    if (!api.domain_get || !api.domain_get_assemblies) { LOGE("runDump: api not initialised"); return; }
+    if (!api.domain_get || !api.domain_get_assemblies) {
+        LOGE("runDump: api not initialised"); return;
+    }
     LOGI("dump started -> %s", out_dir);
 
     std::string effective_dir = out_dir;
     auto tryDir = [&](const std::string& d) -> bool {
-        if (output::ensureDirectory(d.c_str())) { effective_dir = d; return true; } return false;
+        if (output::ensureDirectory(d.c_str())) { effective_dir = d; return true; }
+        return false;
     };
     if (!tryDir(out_dir)) {
-        if (!tryDir("/sdcard/EaquelDumps")) {
-            if (!tryDir("/data/local/tmp/EaquelDumps")) {
-                if (!tryDir("/data/local/tmp")) { LOGE("runDump: no writable dir"); return; }
+        if (!tryDir(std::string(config::kFallbackOutput))) {
+            if (!tryDir(std::string(config::kFallbackOutputMod))) {
+                if (!tryDir(std::string(config::kFallbackOutputKsu))) {
+                    LOGE("runDump: no writable dir"); return;
+                }
             }
         }
     }
@@ -898,10 +1005,11 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
                 auto klass_c = api.image_get_class(img, j);
                 if (!klass_c) continue;
                 auto klass = const_cast<Il2CppClass*>(klass_c);
-                if (!cfg.include_generic && api.class_is_generic && api.class_is_generic(klass)) continue;
-                auto type  = api.class_get_type ? api.class_get_type(klass) : nullptr;
+                if (!cfg.include_generic && api.class_is_generic && api.class_is_generic(klass))
+                    continue;
+                auto type = api.class_get_type ? api.class_get_type(klass) : nullptr;
                 if (!type) continue;
-                auto dumped = dumpTypeToString(type, cfg.dump_nested_classes);
+                auto dumped = dumpTypeToString(type);
                 if (!dumped.empty()) {
                     type_outputs.push_back(hdr + dumped);
                     class_registry.emplace_back(klass, dll);
@@ -909,11 +1017,12 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
             }
         }
     } else {
+        // Reflection fallback path
         if (!api.get_corlib || !api.class_from_name || !api.class_get_method_from_name ||
             !api.string_new || !api.class_get_type)
         { LOGE("reflection path: api missing"); return; }
-        auto corlib    = api.get_corlib();
-        if (!corlib)   { LOGE("get_corlib null"); return; }
+        auto corlib = api.get_corlib();
+        if (!corlib) { LOGE("get_corlib null"); return; }
         auto asm_class = api.class_from_name(corlib, "System.Reflection", "Assembly");
         if (!asm_class) { LOGE("Assembly class not found"); return; }
         auto asm_load     = api.class_get_method_from_name(asm_class, "Load",     1);
@@ -938,11 +1047,12 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
             if (!ref_types || ref_types->max_length == 0) continue;
             for (size_t j = 0; j < ref_types->max_length; ++j) {
                 if (!ref_types->vector[j]) continue;
-                auto klass = api.class_from_system_type(static_cast<Il2CppReflectionType*>(ref_types->vector[j]));
+                auto klass = api.class_from_system_type(
+                    static_cast<Il2CppReflectionType*>(ref_types->vector[j]));
                 if (!klass) continue;
                 auto type = api.class_get_type(klass);
                 if (!type) continue;
-                auto dumped = dumpTypeToString(type, cfg.dump_nested_classes);
+                auto dumped = dumpTypeToString(type);
                 if (!dumped.empty()) {
                     type_outputs.push_back(hdr + dumped);
                     class_registry.emplace_back(klass, dll);
@@ -959,17 +1069,20 @@ static void runDump(const char* out_dir, const config::DumperConfig& cfg) {
             cs << img_header.str();
             for (const auto& e : type_outputs) cs << e;
             cs.close();
-            LOGI("dump.cs written: %zu types -> %s", type_outputs.size(), cs_path.c_str());
+            LOGI("dump.cs written: %zu types -> %s",
+                 type_outputs.size(), cs_path.c_str());
         }
     }
-
-    if (!cfg.dump_only_cs) {
-        if (cfg.generate_cpp_header)   output::writeCppHeader  (dir, class_registry);
-        if (cfg.generate_frida_script) output::writeFridaScript (dir, class_registry);
-    }
+    if (cfg.Cpp_Header)   output::writeCppHeader  (dir, class_registry);
+    if (cfg.Frida_Script) output::writeFridaScript (dir, class_registry);
     LOGI("Dump complete: %zu classes -> %s", type_outputs.size(), dir);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  hackStart  —  FIX [3]: Tüm sleep() çağrıları kaldırıldı
+//  libil2cpp.so bekleme artık eventfd + poll ile yapılıyor.
+//  Exponential backoff mantığı korundu ama sleep yerine poll kullanılıyor.
+// ═══════════════════════════════════════════════════════════════════════════
 namespace {
 
 constexpr int     kMaxRetries  = 10;
@@ -982,8 +1095,22 @@ constexpr int64_t kMaxDelayMs  = 16000;
     return d < kMaxDelayMs ? d : kMaxDelayMs;
 }
 
+// sleep() yerine: eventfd'ye poll() uygula; timeout dolunca devam et.
+// Bu thread'in davranışı zamanlayıcı listelerinde anomali olarak görünmez.
+static void stealthWait(int64_t ms) {
+    if (ms <= 0) return;
+    int efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (efd < 0) return;
+    struct pollfd pf = { efd, POLLIN, 0 };
+    // Birden fazla kısa dilim: uzun tek poll() de syslog'a düşebilir
+    constexpr int64_t kSlice = 250;
+    for (int64_t rem = ms; rem > 0; rem -= kSlice)
+        poll(&pf, 1, static_cast<int>(rem < kSlice ? rem : kSlice));
+    ::close(efd);
+}
+
 static void hackStart(
-    const std::string& ,
+    const std::string& /*game_dir*/,
     const std::string& out_dir,
     const config::DumperConfig& cfg
 ) {
@@ -998,7 +1125,7 @@ static void hackStart(
             }
         }
         if (base) {
-            if (cfg.enable_early_metadata_hook && !metadata_hook::s_fired.load())
+            if (cfg.Protected_Breaker && !metadata_hook::s_fired.load())
                 metadata_hook::install(base, out_dir);
             runApiInit(base);
             runDump(out_dir.c_str(), cfg);
@@ -1006,7 +1133,7 @@ static void hackStart(
         }
         auto delay = exponentialDelay(attempt);
         LOGI("libil2cpp.so not ready attempt=%d delay=%" PRId64 "ms", attempt, delay);
-        std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+        stealthWait(delay); // ← sleep_for yerine görünmez bekleyici
     }
     LOGE("libil2cpp.so not found after %d retries tid=%d", kMaxRetries, gettid());
 }
@@ -1019,26 +1146,33 @@ static void hackPrepare(
     LOGI("hack_prepare tid=%d", gettid());
     LOGI("api_level=%d", android_get_device_api_level());
 #if defined(__arm__)
-    LOGI("mode: ARMv7/Thumb-2 (32-bit)");
+    LOGI("mode: ARMv7/Thumb-2 (32-bit) [auto-detected]");
 #elif defined(__aarch64__)
-    LOGI("mode: AArch64 (64-bit)");
+    LOGI("mode: AArch64 (64-bit) [auto-detected]");
 #endif
     hackStart(game_dir, out_dir, cfg);
 }
 
-}
+} // anonymous namespace
 
-class EaquelDumperModule : public zygisk::ModuleBase {
+// ═══════════════════════════════════════════════════════════════════════════
+//  EaquelDumperModule  —  ReZygisk module entry point
+//  Hot-reload: ConfigWatcher burada başlatılır; JSON değiştiğinde
+//              aktif config anında güncellenir, yeniden başlatma gerekmez.
+// ═══════════════════════════════════════════════════════════════════════════
+class EaquelDumperModule : public rezygisk::ModuleBase {
 public:
-    void onLoad(zygisk::Api* api, JNIEnv* env) override {
-        this->api = api; this->env = env;
+    void onLoad(rezygisk::Api* api, JNIEnv* env) override {
+        this->api = api;
+        this->env = env;
     }
 
-    void preAppSpecialize(zygisk::AppSpecializeArgs* args) override {
+    void preAppSpecialize(rezygisk::AppSpecializeArgs* args) override {
         if (!args) return;
         uint32_t flags = api->getFlags();
-        if (flags & static_cast<uint32_t>(zygisk::StateFlag::PROCESS_ON_DENYLIST)) {
-            api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY); return;
+        if (flags & static_cast<uint32_t>(rezygisk::StateFlag::PROCESS_ON_DENYLIST)) {
+            api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
+            return;
         }
         const char* pkg = nullptr, *dir = nullptr;
         if (args->nice_name)    pkg = env->GetStringUTFChars(args->nice_name,    nullptr);
@@ -1048,44 +1182,88 @@ public:
         if (dir) env->ReleaseStringUTFChars(args->app_data_dir, dir);
     }
 
-    void postAppSpecialize(const zygisk::AppSpecializeArgs*) override {
+    void postAppSpecialize(const rezygisk::AppSpecializeArgs*) override {
         if (!enable_hack) return;
         if (s_orig_dlopen && s_orig_dlopen != dlopen) {
-            LOGI("postAppSpecialize: early hook active"); return;
+            LOGI("postAppSpecialize: early hook active");
+            startConfigWatcher(); // config watcher sadece hedef süreçte
+            return;
         }
-        std::thread([g = std::move(game_dir), o = std::move(out_dir), c = active_cfg]() mutable {
+        startConfigWatcher();
+        std::thread([g = std::move(game_dir), o = std::move(out_dir),
+                     c = active_cfg]() mutable {
             hackPrepare(g, o, c);
         }).detach();
     }
 
 private:
-    zygisk::Api* api         = nullptr;
-    JNIEnv*      env         = nullptr;
-    bool         enable_hack = false;
-    std::string  game_dir, out_dir;
-    config::DumperConfig active_cfg;
+    rezygisk::Api* api         = nullptr;
+    JNIEnv*        env         = nullptr;
+    bool           enable_hack = false;
+    std::string    game_dir, out_dir;
+    config::DumperConfig      active_cfg;
+    config::ConfigWatcher     watcher_;
+
+    void startConfigWatcher() {
+        watcher_.start([this](const config::DumperConfig& new_cfg) {
+            // Hot-reload: yeni config'i atomik olarak güncelle
+            std::lock_guard<std::mutex> lk(cfg_mutex_);
+            active_cfg = new_cfg;
+            s_early_cfg = new_cfg;
+            LOGI("hot-reload: config updated Target_Game=%s Cpp_Header=%d Frida=%d",
+                 new_cfg.Target_Game.c_str(),
+                 (int)new_cfg.Cpp_Header,
+                 (int)new_cfg.Frida_Script);
+        });
+    }
+
+    std::mutex cfg_mutex_;
 
     void preSpecialize(const char* pkg, const char* app_data_dir) {
         installSigsegvHandler();
         active_cfg = config::loadConfig();
-        LOGI("preSpecialize: pkg=%s target=%s", pkg, active_cfg.target_package.c_str());
-        if (!config::isTargetPackage(active_cfg, pkg)) {
-            api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY); return;
+
+        LOGI("preSpecialize: nice_name=%s  app_data_dir=%s  Target_Game=%s",
+             pkg ? pkg : "null",
+             app_data_dir ? app_data_dir : "null",
+             active_cfg.Target_Game.c_str());
+
+        bool is_target = false;
+        if (pkg && !active_cfg.Target_Game.empty() && active_cfg.Target_Game == pkg)
+            is_target = true;
+        else if (app_data_dir && !active_cfg.Target_Game.empty() &&
+                 strstr(app_data_dir, active_cfg.Target_Game.c_str()) != nullptr) {
+            is_target = true;
+            LOGI("Target detected via app_data_dir");
+        } else if (app_data_dir && strstr(app_data_dir, "!") != nullptr &&
+                   (active_cfg.Target_Game.empty() || active_cfg.Target_Game == "!")) {
+            is_target = true;
+            LOGI("Target detected via app_data_dir (hardened fallback)");
         }
-        LOGI("target detected: %s", pkg);
+
+        if (!is_target) {
+            LOGI("Not target package -> closing module");
+            api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
+            return;
+        }
+
+        LOGI("TARGET DETECTED: %s  [64bit=%d]",
+             active_cfg.Target_Game.c_str(), (int)active_cfg.is_64bit);
         enable_hack = true;
-        game_dir    = app_data_dir;
-        out_dir     = active_cfg.output_dir.empty()
+        game_dir    = app_data_dir ? app_data_dir : "";
+        out_dir     = active_cfg.Output.empty()
                       ? std::string(config::kFallbackOutput)
-                      : active_cfg.output_dir;
+                      : active_cfg.Output;
         LOGI("output dir: %s", out_dir.c_str());
-        if (active_cfg.enable_early_metadata_hook)
+        if (active_cfg.Protected_Breaker)
             installDlopenHook(out_dir, active_cfg);
     }
 };
 
-REGISTER_ZYGISK_MODULE(EaquelDumperModule)
+// ── ReZygisk module registration ─────────────────────────────────────────
+REGISTER_REZYGISK_MODULE(EaquelDumperModule)
 
+// ── JNI_OnLoad (standalone / sideload path) ───────────────────────────────
 #if defined(__arm__) || defined(__aarch64__)
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     if (!vm) return JNI_ERR;
@@ -1095,8 +1273,8 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     auto game = (sep != std::string::npos) ? combined.substr(0, sep) : combined;
     auto out  = (sep != std::string::npos) ? combined.substr(sep + 1) : std::string(config::kFallbackOutput);
     config::DumperConfig cfg = config::loadConfig();
-    if (cfg.output_dir.empty()) cfg.output_dir = out;
-    std::thread([g = std::move(game), o = cfg.output_dir, c = std::move(cfg)]() mutable {
+    if (cfg.Output.empty()) cfg.Output = out;
+    std::thread([g = std::move(game), o = cfg.Output, c = std::move(cfg)]() mutable {
         hackStart(g, o, c);
     }).detach();
     return JNI_VERSION_1_6;

@@ -1,0 +1,8 @@
+{
+  "Target_Game": "",
+  "Output": "/sdcard/Eaquel_Dumps",
+  "Cpp_Header": true,
+  "Frida_Script": true,
+  "include_generic": true,
+  "Protected_Breaker": true
+}

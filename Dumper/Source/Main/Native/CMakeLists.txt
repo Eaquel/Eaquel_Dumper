@@ -6,8 +6,8 @@ endif()
 
 project(${MODULE_NAME}
     LANGUAGES    CXX
-    VERSION      1.0.0
-    DESCRIPTION  "Eaquel IL2CPP Dumper — Zygisk-based"
+    VERSION      2.0.0
+    DESCRIPTION  "Eaquel IL2CPP Dumper — ReZygisk Architecture v2.0"
 )
 
 set(CMAKE_CXX_STANDARD          23)
@@ -23,7 +23,7 @@ else()
     set(EAQUEL_ARCH "unknown")
 endif()
 
-message(STATUS "[Eaquel] ABI=${CMAKE_ANDROID_ARCH_ABI}  ARCH=${EAQUEL_ARCH}  BUILD=${CMAKE_BUILD_TYPE}")
+message(STATUS "[Eaquel v2] ABI=${CMAKE_ANDROID_ARCH_ABI}  ARCH=${EAQUEL_ARCH}  BUILD=${CMAKE_BUILD_TYPE}")
 
 set(EAQUEL_C_FLAGS
     -Werror=format
@@ -31,7 +31,7 @@ set(EAQUEL_C_FLAGS
     -ffunction-sections
     -fstack-protector-strong
     -D_FORTIFY_SOURCE=2
-    -DEAQUEL_VERSION_MAJOR=1
+    -DEAQUEL_VERSION_MAJOR=2
     -DEAQUEL_VERSION_MINOR=0
 )
 
@@ -91,6 +91,7 @@ string(APPEND CMAKE_MODULE_LINKER_FLAGS " ${_ld_str}")
 
 add_library(${MODULE_NAME} SHARED
     Dumper.cpp
+    # ReZygisk.hpp and Core.hpp are header-only; listed for IDE visibility
 )
 
 target_include_directories(${MODULE_NAME}
@@ -121,8 +122,13 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     )
 endif()
 
-message(STATUS "[Eaquel] Target : ${MODULE_NAME}")
-message(STATUS "[Eaquel] Arch   : ${EAQUEL_ARCH}")
-message(STATUS "[Eaquel] Build  : ${CMAKE_BUILD_TYPE}")
-message(STATUS "[Eaquel] CXX    : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
-message(STATUS "[Eaquel] Deps   : NONE (custom inline-hook + GOT-patch engine)")
+message(STATUS "[Eaquel v2] Target      : ${MODULE_NAME}")
+message(STATUS "[Eaquel v2] Arch        : ${EAQUEL_ARCH}")
+message(STATUS "[Eaquel v2] Build       : ${CMAKE_BUILD_TYPE}")
+message(STATUS "[Eaquel v2] CXX         : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "[Eaquel v2] Architecture: ReZygisk (Zygisk replaced)")
+message(STATUS "[Eaquel v2] Hook Engine : Stealth RW-only (no RWX pages)")
+message(STATUS "[Eaquel v2] Scanner     : Adaptive (strict+fuzzy+hash-lattice)")
+message(STATUS "[Eaquel v2] Async Wait  : inotify+eventfd (no sleep)")
+message(STATUS "[Eaquel v2] Config      : Hot-reload via inotify")
+message(STATUS "[Eaquel v2] Deps        : NONE (custom inline-hook + GOT-patch engine)")
