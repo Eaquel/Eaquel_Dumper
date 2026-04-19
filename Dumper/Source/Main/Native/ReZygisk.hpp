@@ -1,18 +1,9 @@
 #pragma once
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  ReZygisk.hpp  —  Eaquel Dumper v2.0  (ReZygisk Architecture)
-//  Drop-in replacement for Zygisk.hpp
-//  Compatible with: ReZygisk ≥ 1.0  |  API Level: 4
-// ═══════════════════════════════════════════════════════════════════════════
-
 #include <jni.h>
 #include <cstdint>
 
 #define REZYGISK_API_VERSION 4
-
-// ── Backward-compat alias so existing code compiles unchanged ────────────
-namespace zygisk = rezygisk;
 
 namespace rezygisk {
 
@@ -20,9 +11,6 @@ struct Api;
 struct AppSpecializeArgs;
 struct ServerSpecializeArgs;
 
-// ────────────────────────────────────────────────────────────────────────
-//  ModuleBase
-// ────────────────────────────────────────────────────────────────────────
 class ModuleBase {
 public:
     virtual void onLoad([[maybe_unused]] Api* api,
@@ -66,9 +54,6 @@ struct ServerSpecializeArgs {
     ServerSpecializeArgs() = delete;
 };
 
-// ────────────────────────────────────────────────────────────────────────
-//  Options & Flags
-// ────────────────────────────────────────────────────────────────────────
 enum Option : int {
     FORCE_DENYLIST_UNMOUNT = 0,
     DLCLOSE_MODULE_LIBRARY = 1,
@@ -79,17 +64,11 @@ enum StateFlag : uint32_t {
     PROCESS_ON_DENYLIST  = (1u << 1),
 };
 
-// ────────────────────────────────────────────────────────────────────────
-//  Internal plumbing
-// ────────────────────────────────────────────────────────────────────────
 namespace internal {
 struct api_table;
 template <class T> void entry_impl(api_table*, JNIEnv*);
 }
 
-// ────────────────────────────────────────────────────────────────────────
-//  Public API surface
-// ────────────────────────────────────────────────────────────────────────
 struct Api {
     int      connectCompanion();
     int      getModuleDir();
@@ -107,15 +86,11 @@ private:
     template <class T> friend void internal::entry_impl(internal::api_table*, JNIEnv*);
 };
 
-// ────────────────────────────────────────────────────────────────────────
-//  Registration macros  (rezygisk_ prefix; zygisk_ aliases provided)
-// ────────────────────────────────────────────────────────────────────────
 #define REGISTER_REZYGISK_MODULE(clazz)                                        \
 void rezygisk_module_entry(rezygisk::internal::api_table* table, JNIEnv* env)  \
 {                                                                               \
     rezygisk::internal::entry_impl<clazz>(table, env);                         \
 }                                                                               \
-/* backward-compat alias so old REGISTER_ZYGISK_MODULE still works */          \
 extern "C" [[gnu::visibility("default")]] [[gnu::used]]                        \
 void zygisk_module_entry(rezygisk::internal::api_table* t, JNIEnv* e)          \
 {                                                                               \
@@ -129,18 +104,15 @@ void rezygisk_companion_entry(int client) { func(client); }
 
 #define REGISTER_ZYGISK_COMPANION(func) REGISTER_REZYGISK_COMPANION(func)
 
-// ────────────────────────────────────────────────────────────────────────
-//  Internal ABI structs
-// ────────────────────────────────────────────────────────────────────────
 namespace internal {
 
 struct module_abi {
     long        api_version;
     ModuleBase* _this;
 
-    void (*preAppSpecialize)   (ModuleBase*, AppSpecializeArgs*);
-    void (*postAppSpecialize)  (ModuleBase*, const AppSpecializeArgs*);
-    void (*preServerSpecialize)(ModuleBase*, ServerSpecializeArgs*);
+    void (*preAppSpecialize)    (ModuleBase*, AppSpecializeArgs*);
+    void (*postAppSpecialize)   (ModuleBase*, const AppSpecializeArgs*);
+    void (*preServerSpecialize) (ModuleBase*, ServerSpecializeArgs*);
     void (*postServerSpecialize)(ModuleBase*, const ServerSpecializeArgs*);
 
     explicit module_abi(ModuleBase* module)
@@ -173,16 +145,13 @@ void entry_impl(api_table* table, JNIEnv* env) {
     auto* module = new T();
     if (!table->registerModule(table, new module_abi(module)))
         return;
-    auto* api  = new Api();
-    api->impl  = table;
+    auto* api = new Api();
+    api->impl = table;
     module->onLoad(api, env);
 }
 
-} // namespace internal
+}
 
-// ────────────────────────────────────────────────────────────────────────
-//  Api method inline definitions
-// ────────────────────────────────────────────────────────────────────────
 inline int Api::connectCompanion() {
     return impl->connectCompanion ? impl->connectCompanion(impl->_this) : -1;
 }
@@ -210,16 +179,16 @@ inline bool Api::pltHookCommit() {
     return impl->pltHookCommit && impl->pltHookCommit();
 }
 
-} // namespace rezygisk
+}
 
-// ── External entry-point declarations ───────────────────────────────────
+namespace zygisk = rezygisk;
+
 extern "C" [[gnu::visibility("default")]] [[gnu::used]]
 void rezygisk_module_entry(rezygisk::internal::api_table*, JNIEnv*);
 
 extern "C" [[gnu::visibility("default")]] [[gnu::used]]
 void rezygisk_companion_entry(int);
 
-// Backward-compat aliases
 extern "C" [[gnu::visibility("default")]] [[gnu::used]]
 void zygisk_module_entry(rezygisk::internal::api_table*, JNIEnv*);
 
