@@ -18,16 +18,21 @@
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <span>
+#include <ranges>
+#include <concepts>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/inotify.h>
 #include <sys/eventfd.h>
+#include <sys/system_properties.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <link.h>
 #include <signal.h>
 #include <errno.h>
+#include <dirent.h>
 
 #define LOG_TAG "Eaquel"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
@@ -329,10 +334,10 @@ DO_API(const char*,   il2cpp_field_get_name,       (FieldInfo* field))
 DO_API(size_t,        il2cpp_field_get_offset,     (FieldInfo* field))
 DO_API(const Il2CppType*, il2cpp_field_get_type,   (FieldInfo* field))
 DO_API(void,          il2cpp_field_static_get_value, (FieldInfo* field, void* value))
-DO_API(uint32_t,      il2cpp_property_get_flags,   (PropertyInfo* prop))
-DO_API(const MethodInfo*, il2cpp_property_get_get_method, (PropertyInfo* prop))
-DO_API(const MethodInfo*, il2cpp_property_get_set_method, (PropertyInfo* prop))
-DO_API(const char*,   il2cpp_property_get_name,    (PropertyInfo* prop))
+DO_API(uint32_t,      il2cpp_property_get_flags,   (const PropertyInfo* prop))
+DO_API(const MethodInfo*, il2cpp_property_get_get_method, (const PropertyInfo* prop))
+DO_API(const MethodInfo*, il2cpp_property_get_set_method, (const PropertyInfo* prop))
+DO_API(const char*,   il2cpp_property_get_name,    (const PropertyInfo* prop))
 DO_API(const Il2CppType*, il2cpp_method_get_return_type, (const MethodInfo* method))
 DO_API(const char*,   il2cpp_method_get_name,      (const MethodInfo* method))
 DO_API(uint32_t,      il2cpp_method_get_param_count,(const MethodInfo* method))
@@ -347,6 +352,115 @@ DO_API(int,           il2cpp_type_get_type,        (const Il2CppType* type))
 DO_API(void,          il2cpp_set_default_thread_affinity, (int64_t affinity_mask))
 
 #endif
+
+namespace process_filter {
+
+inline constexpr std::array<std::string_view, 42> kSystemPackagePrefixes = {{
+    "com.android.",
+    "com.google.android.",
+    "com.google.intelligence.",
+    "com.google.ar.",
+    "com.google.vr.",
+    "com.samsung.",
+    "com.sec.",
+    "com.xiaomi.",
+    "com.miui.",
+    "com.huawei.",
+    "com.oppo.",
+    "com.realme.",
+    "com.oneplus.",
+    "com.vivo.",
+    "com.meizu.",
+    "com.asus.",
+    "com.htc.",
+    "com.lge.",
+    "com.motorola.",
+    "com.sony.",
+    "android.",
+    "android",
+    "com.qualcomm.",
+    "com.mediatek.",
+    "com.spreadtrum.",
+    "system",
+    "phone",
+    "com.android.phone",
+    "com.android.systemui",
+    "com.android.launcher",
+    "com.google.process.",
+    "com.google.uid.",
+    "com.android.inputmethod.",
+    "com.google.android.inputmethod.",
+    "com.samsung.android.inputmethod.",
+    "com.swiftkey.",
+    "com.nuance.",
+    "com.touchtype.",
+    "default",
+    "webview_zygote",
+    "com.android.webview",
+    "com.google.android.webview"
+}};
+
+inline constexpr std::array<std::string_view, 18> kSystemProcessNames = {{
+    "zygote",
+    "zygote64",
+    "system_server",
+    "surfaceflinger",
+    "audioserver",
+    "mediaserver",
+    "cameraserver",
+    "installd",
+    "vold",
+    "netd",
+    "wificond",
+    "lmkd",
+    "servicemanager",
+    "hwservicemanager",
+    "keystore",
+    "gatekeeperd",
+    "android.hardware.",
+    "vendor."
+}};
+
+[[nodiscard]] static bool isSystemPackage(std::string_view pkg) noexcept {
+    if (pkg.empty()) return true;
+    for (auto prefix : kSystemPackagePrefixes) {
+        if (pkg.starts_with(prefix)) return true;
+    }
+    return false;
+}
+
+[[nodiscard]] static bool isSystemProcess(std::string_view proc) noexcept {
+    if (proc.empty()) return true;
+    for (auto name : kSystemProcessNames) {
+        if (proc == name || proc.starts_with(name)) return true;
+    }
+    return false;
+}
+
+[[nodiscard]] static bool isThirdPartyApp(std::string_view pkg) noexcept {
+    if (pkg.empty()) return false;
+    if (isSystemPackage(pkg)) return false;
+    if (pkg.starts_with("com.") || pkg.starts_with("org.") ||
+        pkg.starts_with("net.") || pkg.starts_with("io.")  ||
+        pkg.starts_with("app.") || pkg.starts_with("me.")  ||
+        pkg.starts_with("co."))
+    {
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] static bool hasThirdPartyApkInstalled(std::string_view pkg) noexcept {
+    if (pkg.empty()) return false;
+    std::string apk_path = "/data/app/" + std::string(pkg);
+    struct stat st{};
+    if (stat(apk_path.c_str(), &st) == 0) return true;
+    std::string apk_path2 = "/data/app/" + std::string(pkg) + "-1";
+    if (stat(apk_path2.c_str(), &st) == 0) return true;
+    return false;
+}
+
+} // namespace process_filter
 
 namespace entropy {
 
@@ -713,10 +827,14 @@ namespace config {
 inline constexpr std::string_view kConfigPathPrimary = "/sdcard/Eaquel_Config.json";
 inline constexpr std::string_view kConfigPathModule  = "/data/adb/modules/eaquel_dumper/Eaquel_Config.json";
 inline constexpr std::string_view kConfigPathKsu     = "/data/adb/ksu/modules/eaquel_dumper/Eaquel_Config.json";
+inline constexpr std::string_view kConfigPathApatch  = "/data/adb/apatch/modules/eaquel_dumper/Eaquel_Config.json";
 inline constexpr std::string_view kFallbackOutput    = "/sdcard/Eaquel_Dumps";
 inline constexpr std::string_view kFallbackOutputMod = "/data/adb/modules/eaquel_dumper/Eaquel_Dumps";
 inline constexpr std::string_view kFallbackOutputKsu = "/data/adb/ksu/modules/eaquel_dumper/Eaquel_Dumps";
 inline constexpr std::string_view kCacheDir          = "/data/local/tmp/.eaq_cache";
+
+inline constexpr int kAndroidMinApi = 30;
+inline constexpr int kAndroidMaxApi = 37;
 
 struct DumperConfig {
     std::string Target_Game;
@@ -789,7 +907,7 @@ struct DumperConfig {
 
 [[nodiscard]] static DumperConfig loadConfig() {
     const std::string_view paths[] = {
-        kConfigPathPrimary, kConfigPathModule, kConfigPathKsu
+        kConfigPathPrimary, kConfigPathModule, kConfigPathKsu, kConfigPathApatch
     };
     for (auto path : paths) {
         std::ifstream file(path.data());
@@ -826,7 +944,7 @@ public:
         if (efd_ < 0) { LOGE("eventfd failed errno=%d", errno); ::close(ifd_); ifd_=-1; return false; }
 
         const std::string_view paths[] = {
-            kConfigPathPrimary, kConfigPathModule, kConfigPathKsu
+            kConfigPathPrimary, kConfigPathModule, kConfigPathKsu, kConfigPathApatch
         };
         bool any_watch = false;
         for (auto p : paths) {

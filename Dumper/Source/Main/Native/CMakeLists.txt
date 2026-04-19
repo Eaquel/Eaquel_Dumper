@@ -1,47 +1,63 @@
 cmake_minimum_required(VERSION 4.3.1)
 
 if(NOT DEFINED MODULE_NAME)
-    message(FATAL_ERROR "MODULE_NAME must be set, e.g. -DMODULE_NAME=eaqueldumper")
+    message(FATAL_ERROR "MODULE_NAME must be set: -DMODULE_NAME=eaqueldumper")
 endif()
 
 project(${MODULE_NAME}
     LANGUAGES    CXX
-    VERSION      2.0.0
-    DESCRIPTION  "Eaquel IL2CPP Dumper — ReZygisk Architecture v2.0"
+    VERSION      4.0.0
+    DESCRIPTION  "Eaquel IL2CPP Dumper — ReZygisk Stealth Architecture v4.0"
 )
 
 set(CMAKE_CXX_STANDARD          23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS        OFF)
 
-if(NOT DEFINED ANDROID_PLATFORM OR ANDROID_PLATFORM LESS 30)
-    message(FATAL_ERROR "Minimum supported Android API is 30 (Android 11). Got: ${ANDROID_PLATFORM}")
+set(EAQUEL_MIN_API 30)
+set(EAQUEL_MAX_API 37)
+
+if(NOT DEFINED ANDROID_PLATFORM OR ANDROID_PLATFORM LESS ${EAQUEL_MIN_API})
+    message(FATAL_ERROR
+        "Minimum supported Android API is ${EAQUEL_MIN_API} (Android 11). Got: ${ANDROID_PLATFORM}")
 endif()
-if(ANDROID_PLATFORM GREATER 36)
-    message(WARNING "Android API ${ANDROID_PLATFORM} exceeds tested maximum (36 / Android 16)")
+if(ANDROID_PLATFORM GREATER ${EAQUEL_MAX_API})
+    message(WARNING
+        "Android API ${ANDROID_PLATFORM} exceeds tested maximum (${EAQUEL_MAX_API} / Android 17)")
 endif()
+
+set(EAQUEL_ARCH    "unknown")
+set(EAQUEL_IS_64BIT OFF)
+set(EAQUEL_IS_EMU   OFF)
 
 if(CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
-    set(EAQUEL_ARCH "arm64")
+    set(EAQUEL_ARCH    "arm64")
+    set(EAQUEL_IS_64BIT ON)
 elseif(CMAKE_ANDROID_ARCH_ABI STREQUAL "armeabi-v7a")
     set(EAQUEL_ARCH "arm32")
+elseif(CMAKE_ANDROID_ARCH_ABI STREQUAL "x86_64")
+    set(EAQUEL_ARCH    "x86_64")
+    set(EAQUEL_IS_64BIT ON)
+    set(EAQUEL_IS_EMU   ON)
+elseif(CMAKE_ANDROID_ARCH_ABI STREQUAL "x86")
+    set(EAQUEL_ARCH "x86")
+    set(EAQUEL_IS_EMU ON)
 else()
-    message(WARNING "Unsupported ABI '${CMAKE_ANDROID_ARCH_ABI}'")
-    set(EAQUEL_ARCH "unknown")
+    message(WARNING "Unknown ABI '${CMAKE_ANDROID_ARCH_ABI}' — proceeding with generic settings")
 endif()
 
-message(STATUS "[Eaquel v2] ABI=${CMAKE_ANDROID_ARCH_ABI}  ARCH=${EAQUEL_ARCH}  BUILD=${CMAKE_BUILD_TYPE}")
+message(STATUS "[Eaquel v4] ABI=${CMAKE_ANDROID_ARCH_ABI}  ARCH=${EAQUEL_ARCH}  64BIT=${EAQUEL_IS_64BIT}  EMU=${EAQUEL_IS_EMU}  BUILD=${CMAKE_BUILD_TYPE}")
 
-set(EAQUEL_C_FLAGS
+set(EAQUEL_COMMON_FLAGS
     -Werror=format
     -fdata-sections
     -ffunction-sections
     -fstack-protector-strong
     -D_FORTIFY_SOURCE=2
-    -DEAQUEL_VERSION_MAJOR=2
+    -DEAQUEL_VERSION_MAJOR=4
     -DEAQUEL_VERSION_MINOR=0
-    -DANDROID_MIN_API=30
-    -DANDROID_MAX_API=36
+    -DANDROID_MIN_API=${EAQUEL_MIN_API}
+    -DANDROID_MAX_API=${EAQUEL_MAX_API}
 )
 
 set(EAQUEL_CXX_FLAGS
@@ -52,31 +68,55 @@ set(EAQUEL_CXX_FLAGS
 )
 
 if(EAQUEL_ARCH STREQUAL "arm64")
-    list(APPEND EAQUEL_C_FLAGS -march=armv8-a)
+    list(APPEND EAQUEL_COMMON_FLAGS
+        -march=armv8-a+simd
+        -DEAQUEL_ARM64=1
+        -DEAQUEL_64BIT=1
+    )
 elseif(EAQUEL_ARCH STREQUAL "arm32")
-    list(APPEND EAQUEL_C_FLAGS
+    list(APPEND EAQUEL_COMMON_FLAGS
         -mthumb
         -march=armv7-a
         -mfloat-abi=softfp
         -mfpu=neon
+        -DEAQUEL_ARM32=1
+        -DEAQUEL_32BIT=1
+    )
+elseif(EAQUEL_ARCH STREQUAL "x86_64")
+    list(APPEND EAQUEL_COMMON_FLAGS
+        -march=x86-64
+        -DEAQUEL_X86_64=1
+        -DEAQUEL_EMULATOR=1
+        -DEAQUEL_64BIT=1
+    )
+elseif(EAQUEL_ARCH STREQUAL "x86")
+    list(APPEND EAQUEL_COMMON_FLAGS
+        -march=i686
+        -msse4.2
+        -DEAQUEL_X86=1
+        -DEAQUEL_EMULATOR=1
+        -DEAQUEL_32BIT=1
     )
 endif()
 
 set(EAQUEL_LINKER_FLAGS
     -Wl,--hash-style=both
-    -Wl,-z,max-page-size=16384
     -Wl,-z,noexecstack
 )
 
+if(NOT EAQUEL_IS_EMU)
+    list(APPEND EAQUEL_LINKER_FLAGS -Wl,-z,max-page-size=16384)
+endif()
+
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
-    list(APPEND EAQUEL_C_FLAGS
+    list(APPEND EAQUEL_COMMON_FLAGS
         -O3
         -fvisibility=hidden
         -fvisibility-inlines-hidden
         -flto=thin
     )
     if(EAQUEL_ARCH STREQUAL "arm64")
-        list(APPEND EAQUEL_C_FLAGS -mbranch-protection=standard)
+        list(APPEND EAQUEL_COMMON_FLAGS -mbranch-protection=standard)
     endif()
     list(APPEND EAQUEL_LINKER_FLAGS
         -Wl,-exclude-libs,ALL
@@ -86,15 +126,15 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
         -Wl,-z,now
     )
 else()
-    list(APPEND EAQUEL_C_FLAGS -O0 -g -DDEBUG_BUILD)
+    list(APPEND EAQUEL_COMMON_FLAGS -O0 -g -DDEBUG_BUILD)
 endif()
 
-list(JOIN EAQUEL_C_FLAGS      " " _c_str)
+list(JOIN EAQUEL_COMMON_FLAGS " " _common_str)
 list(JOIN EAQUEL_CXX_FLAGS    " " _cxx_str)
 list(JOIN EAQUEL_LINKER_FLAGS " " _ld_str)
 
-string(APPEND CMAKE_C_FLAGS             " ${_c_str}")
-string(APPEND CMAKE_CXX_FLAGS           " ${_c_str} ${_cxx_str}")
+string(APPEND CMAKE_C_FLAGS             " ${_common_str}")
+string(APPEND CMAKE_CXX_FLAGS           " ${_common_str} ${_cxx_str}")
 string(APPEND CMAKE_SHARED_LINKER_FLAGS " ${_ld_str}")
 string(APPEND CMAKE_MODULE_LINKER_FLAGS " ${_ld_str}")
 
@@ -104,12 +144,6 @@ add_library(${MODULE_NAME} SHARED
 
 target_include_directories(${MODULE_NAME}
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
-target_compile_definitions(${MODULE_NAME}
-    PRIVATE
-        $<$<STREQUAL:${EAQUEL_ARCH},arm64>:EAQUEL_ARM64=1>
-        $<$<STREQUAL:${EAQUEL_ARCH},arm32>:EAQUEL_ARM32=1>
 )
 
 target_link_libraries(${MODULE_NAME}
@@ -130,8 +164,10 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     )
 endif()
 
-message(STATUS "[Eaquel v2] Target      : ${MODULE_NAME}")
-message(STATUS "[Eaquel v2] Arch        : ${EAQUEL_ARCH}")
-message(STATUS "[Eaquel v2] Build       : ${CMAKE_BUILD_TYPE}")
-message(STATUS "[Eaquel v2] CXX         : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
-message(STATUS "[Eaquel v2] Android API : ${ANDROID_PLATFORM} (supported range 30-36)")
+message(STATUS "[Eaquel v4] Target      : ${MODULE_NAME}")
+message(STATUS "[Eaquel v4] Arch        : ${EAQUEL_ARCH}")
+message(STATUS "[Eaquel v4] 64-bit      : ${EAQUEL_IS_64BIT}")
+message(STATUS "[Eaquel v4] Emulator    : ${EAQUEL_IS_EMU}")
+message(STATUS "[Eaquel v4] Build       : ${CMAKE_BUILD_TYPE}")
+message(STATUS "[Eaquel v4] CXX         : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "[Eaquel v4] Android API : ${ANDROID_PLATFORM} (range ${EAQUEL_MIN_API}-${EAQUEL_MAX_API})")

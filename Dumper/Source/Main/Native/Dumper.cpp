@@ -1,27 +1,3 @@
-// =============================================================================
-// Dumper.cpp  —  Eaquel IL2CPP Dumper  (ReZygisk / Zygisk Modülü)
-// Derleyici  : C++23  |  CMake 3.28+  |  AGP 9.1.1  |  Gradle 9.4.1
-// Android API: min 30 (Android 11)  —  max 36 (Android 16)
-// Mimari     : arm64-v8a / armeabi-v7a
-//
-// ═══════════════════════════════════════════════════════════════════════════
-//  BOOTLOOP KORUMA MİMARİSİ  (4 Katmanlı)
-// ───────────────────────────────────────────────────────────────────────────
-//  SORUN:
-//    Zygisk/ReZygisk modülü, cihaz açılırken Zygote sürecine yüklenir.
-//    JNI_OnLoad otomatik tetiklenir ve hackStart() çağrısı Zygote'un
-//    içinde libil2cpp.so aramaya, bellek taramaya ve mprotect ile bellek
-//    korumalarını kırmaya çalışır. Zygote bir Unity oyunu olmadığından
-//    SIGSEGV alır ve sistem yeniden başlatma döngüsüne (bootloop) girer.
-//
-//  ÇÖZÜM  —  4 Katman:
-//    Katman 1: isZygoteProcess()   → Mevcut PID zygote/zygote64 ise çık
-//    Katman 2: onLoad / preAppSpecialize → Sadece hedef pakette aktif ol
-//    Katman 3: JNI_OnLoad güvenliği → Zygote'daysak anında çık
-//    Katman 4: hackStart() timeout  → 30 sn içinde bulamazsa dur
-// =============================================================================
-
-// IL2CPP API fonksiyon pointer tanımları — Core.hpp tarafından kullanılır
 #define DO_API(r, n, p)           r (*n) p = nullptr;
 #define DO_API_NO_RETURN(r, n, p) r (*n) p = nullptr;
 #include "Core.hpp"
@@ -54,86 +30,87 @@
 #include <link.h>
 #include <mutex>
 #include <poll.h>
+#include <dirent.h>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Yardımcı: nullptr veya boş string için fallback döner
-// ─────────────────────────────────────────────────────────────────────────────
 static inline const char* safeStr(const char* s, const char* fallback = "") {
     return (s && *s) ? s : fallback;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fonksiyon ön bildirimleri  (forward declarations)
-// ─────────────────────────────────────────────────────────────────────────────
 static void runApiInit(uintptr_t base);
 static void runDump(const std::string& out_dir, const config::DumperConfig& cfg);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Erken-hook paylaşım değişkenleri
-// dlopen hook kurulmadan önce postAppSpecialize çıktı dizinini saklar
-// ─────────────────────────────────────────────────────────────────────────────
-static std::string          s_early_out_dir;          // Erken hook çıktı dizini
-static config::DumperConfig s_early_cfg;              // Erken hook konfigürasyonu
-static std::atomic<bool>    s_early_hook_fired{false};// Erken hook bir kez tetiklensin
-static std::mutex           s_early_cfg_mutex;        // Erken cfg mutex
+static std::string          s_early_out_dir;
+static config::DumperConfig s_early_cfg;
+static std::atomic<bool>    s_early_hook_fired{false};
+static std::mutex           s_early_cfg_mutex;
 
-// =============================================================================
-//  KATMAN 1 — isZygoteProcess()
-//  /proc/self/cmdline okuyarak mevcut process'in Zygote olup olmadığını
-//  kontrol eder. Zygote ise hiçbir hack kodu çalışmamalıdır.
-// =============================================================================
 [[nodiscard]] static bool isZygoteProcess() noexcept {
-    // /proc/self/cmdline → process adı null-terminated string olarak saklanır
     char cmdline[256] = {};
     int fd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
-        // Açamazsak güvenli tarafta kalıp Zygote olduğunu varsay
-        LOGW("[BootGuard] cmdline okunamadı errno=%d — Zygote olarak kabul ediliyor", errno);
+        LOGW("[BootGuard] cmdline okunamadı errno=%d", errno);
         return true;
     }
     ssize_t n = read(fd, cmdline, sizeof(cmdline) - 1);
     close(fd);
-    if (n <= 0) return true;                      // Okuma başarısız → güvenli taraf
-
-    // "zygote" veya "zygote64" ile başlıyorsa bu process Zygote'tur
+    if (n <= 0) return true;
     bool is_zygote = (strncmp(cmdline, "zygote", 6) == 0);
     if (is_zygote) {
-        LOGW("[BootGuard] ZYGOTE DETECTED — cmdline='%s' — hack devre dışı!", cmdline);
+        LOGW("[BootGuard] ZYGOTE DETECTED cmdline='%s'", cmdline);
     }
     return is_zygote;
 }
 
-// =============================================================================
-//  hook_engine namespace
-//  Inline hook ve GOT patch altyapısı — yalnızca hedef uygulama sürecinde
-//  çağrılır (preAppSpecialize ile güvence altındadır).
-// =============================================================================
+[[nodiscard]] static int getAndroidApiLevel() noexcept {
+    char prop[PROP_VALUE_MAX] = {};
+    __system_property_get("ro.build.version.sdk", prop);
+    int api = atoi(prop);
+    return (api > 0) ? api : 30;
+}
+
+[[nodiscard]] static bool isApiLevelSupported() noexcept {
+    int api = getAndroidApiLevel();
+    return api >= config::kAndroidMinApi && api <= config::kAndroidMaxApi;
+}
+
+[[nodiscard]] static bool isSystemUid(uid_t uid) noexcept {
+    return uid < 10000u;
+}
+
+[[nodiscard]] static bool isInstalledAsUserApp(std::string_view pkg) noexcept {
+    if (pkg.empty()) return false;
+    std::string path = "/data/data/" + std::string(pkg);
+    struct stat st{};
+    if (stat(path.c_str(), &st) != 0) return false;
+    return st.st_uid >= 10000u;
+}
+
+[[nodiscard]] static bool shouldIgnoreProcess(std::string_view pkg) noexcept {
+    if (pkg.empty()) return true;
+    if (process_filter::isSystemProcess(pkg)) return true;
+    if (process_filter::isSystemPackage(pkg)) return true;
+    return false;
+}
+
 namespace hook_engine {
 
 static constexpr size_t kPageSize = 4096;
 
-// Sayfa hizalama yardımcıları
 static uintptr_t alignDown(uintptr_t a) { return a & ~(kPageSize - 1u); }
 static uintptr_t alignUp  (uintptr_t a) { return (a + kPageSize - 1u) & ~(kPageSize - 1u); }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// stealthPatchWindow: Bellek korumasını geçici olarak RW yapıp patch uygular,
-// ardından RX olarak geri yükler. Zygote sürecinde çağrılmaz.
-// ─────────────────────────────────────────────────────────────────────────────
 static bool stealthPatchWindow(uintptr_t addr, size_t len,
                                const std::function<void()>& patch_fn)
 {
     void*  page     = reinterpret_cast<void*>(alignDown(addr));
     size_t page_len = alignUp(len + (addr - alignDown(addr)));
 
-    // RW koruma aç
     if (mprotect(page, page_len, PROT_READ | PROT_WRITE) != 0) {
         LOGE("hook: mprotect RW failed addr=0x%" PRIxPTR " errno=%d", addr, errno);
         return false;
     }
     patch_fn();
 
-    // RX korumaya geri dön
     if (mprotect(page, page_len, PROT_READ | PROT_EXEC) != 0) {
         LOGE("hook: mprotect RX failed addr=0x%" PRIxPTR " errno=%d", addr, errno);
         return false;
@@ -141,16 +118,11 @@ static bool stealthPatchWindow(uintptr_t addr, size_t len,
     return true;
 }
 
-// I-cache temizle — hook yazıldıktan sonra CPU'nun eski kodu görmemesi için
 static void flushCache(uintptr_t addr, size_t len) {
     __builtin___clear_cache(reinterpret_cast<char*>(addr),
                             reinterpret_cast<char*>(addr + len));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// allocTrampolinePage: Hedef adrese ±128 MB yakın boş bir sayfa bul ve ayır.
-// Bulamazsa MAP_ANONYMOUS ile herhangi bir yere ayır.
-// ─────────────────────────────────────────────────────────────────────────────
 static void* allocTrampolinePage(uintptr_t near_addr) {
     uintptr_t lo = (near_addr > 0x8000000u) ? (near_addr - 0x8000000u) : 0;
     uintptr_t hi = near_addr + 0x8000000u;
@@ -180,7 +152,6 @@ static void* allocTrampolinePage(uintptr_t near_addr) {
     }
     fclose(f);
 
-    // Yakın yer bulunamazsa herhangi bir adrese yerleştir
     if (!result) {
         result = mmap(nullptr, kPageSize, PROT_READ | PROT_WRITE,
                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -189,23 +160,18 @@ static void* allocTrampolinePage(uintptr_t near_addr) {
     return result;
 }
 
-// Trampolin sayfasını çalıştırılabilir yap
 static bool lockTrampolineRX(void* page) {
     return mprotect(page, kPageSize, PROT_READ | PROT_EXEC) == 0;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AArch64 (arm64-v8a) inline hook implementasyonu
-// LDR x17, #8  +  BR x17  +  64-bit hedef adres (16 byte toplam)
-// ─────────────────────────────────────────────────────────────────────────────
 #if defined(__aarch64__)
 static constexpr size_t kHookSize = 16;
 
 struct Trampoline {
-    uint8_t  saved[kHookSize]; // Orijinal ilk 16 byte
-    uint32_t ldr_x17;          // LDR x17, #8
-    uint32_t br_x17;           // BR  x17
-    uint64_t return_addr;      // Orijinal fonksiyon + 16 (hook sonrası devam)
+    uint8_t  saved[kHookSize];
+    uint32_t ldr_x17;
+    uint32_t br_x17;
+    uint64_t return_addr;
 };
 
 [[nodiscard]] bool installInlineHook(void* target, void* hook, void** orig_out) {
@@ -215,11 +181,10 @@ struct Trampoline {
     auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
     if (!tramp_page) { LOGE("hook[arm64]: trampoline alloc failed"); return false; }
 
-    // Trampolin: orijinal baytları koru + orijinal+16 adresine zıpla
     auto* tramp       = reinterpret_cast<Trampoline*>(tramp_page);
     memcpy(tramp->saved, reinterpret_cast<void*>(tgt), kHookSize);
-    tramp->ldr_x17    = 0x58000051u; // LDR x17, #8
-    tramp->br_x17     = 0xD61F0220u; // BR  x17
+    tramp->ldr_x17    = 0x58000051u;
+    tramp->br_x17     = 0xD61F0220u;
     tramp->return_addr = static_cast<uint64_t>(tgt + kHookSize);
     flushCache(reinterpret_cast<uintptr_t>(tramp), sizeof(Trampoline));
 
@@ -227,7 +192,6 @@ struct Trampoline {
         LOGE("hook[arm64]: trampoline lock RX failed"); return false;
     }
 
-    // Hedef fonksiyonun başına hook yönlendirmesini yaz
     bool ok = stealthPatchWindow(tgt, kHookSize, [&]() {
         auto*    dst      = reinterpret_cast<uint8_t*>(tgt);
         uint32_t ldr      = 0x58000051u;
@@ -245,26 +209,21 @@ struct Trampoline {
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ARMv7 / Thumb-2 (armeabi-v7a) inline hook implementasyonu
-// LDR PC, [PC+0]  +  hook_addr (8 byte toplam, Thumb modunda)
-// ─────────────────────────────────────────────────────────────────────────────
 #elif defined(__arm__)
 static constexpr size_t kHookSize = 8;
 
 [[nodiscard]] bool installInlineHook(void* target, void* hook, void** orig_out) {
     auto tgt_thumb = reinterpret_cast<uintptr_t>(target);
-    auto tgt       = tgt_thumb & ~1u; // Thumb bitini temizle
+    auto tgt       = tgt_thumb & ~1u;
     if (!scanner::isReadableAddress(tgt)) return false;
 
     auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
     if (!tramp_page) { LOGE("hook[arm32]: trampoline alloc failed"); return false; }
 
-    // Orijinal 8 byte'ı trampoline'e kopyala, ardından geri dön
     memcpy(tramp_page, reinterpret_cast<void*>(tgt), kHookSize);
-    const uint8_t jback[] = { 0xDF, 0xF8, 0x00, 0xF0 }; // LDR PC, [PC+0]
+    const uint8_t jback[] = { 0xDF, 0xF8, 0x00, 0xF0 };
     memcpy(tramp_page + kHookSize, jback, 4);
-    uint32_t ret_addr = static_cast<uint32_t>(tgt + kHookSize) | 1u; // Thumb bit
+    uint32_t ret_addr = static_cast<uint32_t>(tgt + kHookSize) | 1u;
     memcpy(tramp_page + kHookSize + 4, &ret_addr, 4);
     flushCache(reinterpret_cast<uintptr_t>(tramp_page), kHookSize + 8);
 
@@ -273,7 +232,7 @@ static constexpr size_t kHookSize = 8;
     }
 
     bool ok = stealthPatchWindow(tgt, kHookSize, [&]() {
-        const uint8_t ldr_pc[] = { 0xDF, 0xF8, 0x00, 0xF0 }; // LDR PC, [PC+0]
+        const uint8_t ldr_pc[] = { 0xDF, 0xF8, 0x00, 0xF0 };
         memcpy(reinterpret_cast<void*>(tgt), ldr_pc, 4);
         uint32_t hook_addr = reinterpret_cast<uint32_t>(hook) | 1u;
         memcpy(reinterpret_cast<void*>(tgt + 4), &hook_addr, 4);
@@ -287,15 +246,50 @@ static constexpr size_t kHookSize = 8;
     return true;
 }
 
+#elif defined(__x86_64__) || defined(__i386__)
+static constexpr size_t kHookSize = 14;
+
+[[nodiscard]] bool installInlineHook(void* target, void* hook, void** orig_out) {
+    auto tgt = reinterpret_cast<uintptr_t>(target);
+    if (!scanner::isReadableAddress(tgt)) return false;
+
+    auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
+    if (!tramp_page) { LOGE("hook[x86]: trampoline alloc failed"); return false; }
+
+    memcpy(tramp_page, reinterpret_cast<void*>(tgt), kHookSize);
+    flushCache(reinterpret_cast<uintptr_t>(tramp_page), kHookSize);
+
+    if (!lockTrampolineRX(tramp_page)) {
+        LOGE("hook[x86]: trampoline lock RX failed"); return false;
+    }
+
+    bool ok = stealthPatchWindow(tgt, kHookSize, [&]() {
+        auto* dst = reinterpret_cast<uint8_t*>(tgt);
+#if defined(__x86_64__)
+        dst[0] = 0xFF; dst[1] = 0x25;
+        uint32_t rel = 0;
+        memcpy(dst + 2, &rel, 4);
+        uint64_t hook_addr = reinterpret_cast<uint64_t>(hook);
+        memcpy(dst + 6, &hook_addr, 8);
 #else
-// Desteklenmeyen mimari — hook yok
+        dst[0] = 0xE9;
+        uint32_t rel = static_cast<uint32_t>(
+            reinterpret_cast<uintptr_t>(hook) - tgt - 5);
+        memcpy(dst + 1, &rel, 4);
+#endif
+        flushCache(tgt, kHookSize);
+    });
+
+    if (!ok) return false;
+    if (orig_out) *orig_out = reinterpret_cast<void*>(tramp_page);
+    LOGI("hook[x86]: target=%p hook=%p tramp=%p", target, hook, tramp_page);
+    return true;
+}
+
+#else
 [[nodiscard]] bool installInlineHook(void*, void*, void**) { return false; }
 #endif
 
-// ─────────────────────────────────────────────────────────────────────────────
-// patchGotSlot: GOT (Global Offset Table) içindeki fonksiyon slotunu hookla.
-// PLT/GOT hook, inline hook'tan daha az risklidir ancak sadece kendi .so için.
-// ─────────────────────────────────────────────────────────────────────────────
 [[nodiscard]] bool patchGotSlot(void* target_fn, void* hook_fn, void** orig_out) {
     Dl_info di{};
     if (!dladdr(reinterpret_cast<void*>(&patchGotSlot), &di) || !di.dli_fbase) {
@@ -311,8 +305,8 @@ static constexpr size_t kHookSize = 8;
         uintptr_t seg_s = 0, seg_e = 0;
         char perms[8] = {};
         if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR " %7s", &seg_s, &seg_e, perms) < 3) continue;
-        if (perms[1] != 'w') continue;                                  // Yazılabilir segment
-        if (seg_s < self_base || seg_s > self_base + 0x8000000u) continue; // Kendi .so sınırı
+        if (perms[1] != 'w') continue;
+        if (seg_s < self_base || seg_s > self_base + 0x8000000u) continue;
 
         for (uintptr_t addr = seg_s; addr + sizeof(void*) <= seg_e; addr += sizeof(void*)) {
             void** slot = reinterpret_cast<void**>(addr);
@@ -335,10 +329,6 @@ static constexpr size_t kHookSize = 8;
 
 } // namespace hook_engine
 
-// =============================================================================
-//  SIGSEGV handler — crash'leri yakalar ve loga yazar, Zygote'u öldürmez
-//  Sadece hedef uygulama sürecinde kurulur.
-// =============================================================================
 static void installSigsegvHandler() {
     struct sigaction sa{};
     sa.sa_sigaction = scanner::sigsegv_handler;
@@ -347,24 +337,15 @@ static void installSigsegvHandler() {
     sigaction(SIGSEGV, &sa, nullptr);
 }
 
-// =============================================================================
-//  metadata_hook namespace
-//  IL2CPP metadata loader fonksiyonunu hooklar; şifreli metadata'yı yakalar,
-//  XOR anahtarını tahmin ederek çözmeye çalışır ve diske yazar.
-// =============================================================================
 namespace metadata_hook {
 
 using MetadataLoadFn = void* (*)(const char* path, size_t* out_size);
 
 static MetadataLoadFn    s_orig_load = nullptr;
-static std::atomic<bool> s_fired{false};         // Bir kez tetiklensin
+static std::atomic<bool> s_fired{false};
 static std::string       s_dump_dir;
 static std::mutex        s_mutex;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// persistDecryptedMetadata: Bellekteki metadata buffer'ını analiz eder,
-// şifreli ise XOR key bularak çözer ve diske yazar.
-// ─────────────────────────────────────────────────────────────────────────────
 static void persistDecryptedMetadata(const void* data, size_t size, const char* src_path) {
     if (!data || size < 4) return;
 
@@ -373,28 +354,24 @@ static void persistDecryptedMetadata(const void* data, size_t size, const char* 
     std::vector<uint8_t> plaintext;
 
     if (state == entropy::MetadataState::Encrypted) {
-        LOGI("[MetaHook] Buffer şifreli — XOR anahtar taraması başlıyor");
+        LOGI("[MetaHook] Buffer encrypted — XOR key scan starting");
         auto key = entropy::discoverXorKey(buf, size);
         if (key.found && key.score >= 2) {
             plaintext = entropy::decryptBuffer(buf, size, key);
-            LOGI("[MetaHook] Şifre çözme tamamlandı key_len=%zu score=%d",
-                 key.key_len, key.score);
+            LOGI("[MetaHook] Decrypt done key_len=%zu score=%d", key.key_len, key.score);
         } else {
-            LOGW("[MetaHook] XOR anahtarı doğrulanamadı — ham buffer yazılıyor");
+            LOGW("[MetaHook] XOR key unverified — writing raw buffer");
             plaintext.assign(buf, buf + size);
         }
     } else {
-        // Zaten plain — direkt kopyala
         plaintext.assign(buf, buf + size);
     }
 
-    // Magic byte doğrulama
     uint32_t out_magic = 0;
     if (plaintext.size() >= 4) memcpy(&out_magic, plaintext.data(), 4);
     if (out_magic != entropy::kIl2CppMetadataMagic)
-        LOGW("[MetaHook] Çıkış magic 0x%08X — hâlâ şifreli olabilir", out_magic);
+        LOGW("[MetaHook] Output magic 0x%08X — may still be encrypted", out_magic);
 
-    // Çıktı dizinini oluştur ve dosyayı yaz
     std::lock_guard<std::mutex> lk(s_mutex);
     struct stat st{};
     if (stat(s_dump_dir.c_str(), &st) != 0) mkdir(s_dump_dir.c_str(), 0777);
@@ -402,7 +379,7 @@ static void persistDecryptedMetadata(const void* data, size_t size, const char* 
     std::string out_path = s_dump_dir + "/global-metadata.dat";
     int fd = open(out_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) {
-        LOGE("[MetaHook] open(%s) başarısız errno=%d", out_path.c_str(), errno);
+        LOGE("[MetaHook] open(%s) failed errno=%d", out_path.c_str(), errno);
         return;
     }
     const uint8_t* ptr  = plaintext.data();
@@ -414,16 +391,15 @@ static void persistDecryptedMetadata(const void* data, size_t size, const char* 
         left -= static_cast<size_t>(w);
     }
     close(fd);
-    LOGI("[MetaHook] metadata yazıldı (%zu byte) %s -> %s",
+    LOGI("[MetaHook] metadata written (%zu bytes) %s -> %s",
          plaintext.size(), src_path ? src_path : "?", out_path.c_str());
 }
 
-// Hooklanmış metadata loader — orijinalini çağır, sonucu yakala
 static void* hooked_MetadataLoad(const char* path, size_t* out_size) {
     void* result = s_orig_load(path, out_size);
     bool  expected = false;
     if (result && out_size && s_fired.compare_exchange_strong(expected, true)) {
-        LOGI("[MetaHook] tetiklendi path=%s size=%zu", path ? path : "?", *out_size);
+        LOGI("[MetaHook] triggered path=%s size=%zu", path ? path : "?", *out_size);
         std::thread([data  = result,
                      size  = *out_size,
                      spath = std::string(path ? path : "")]() {
@@ -433,7 +409,6 @@ static void* hooked_MetadataLoad(const char* path, size_t* out_size) {
     return result;
 }
 
-// Hook'u ilgili IL2CPP sembolüne kur
 static bool install(uintptr_t lib_base, const std::string& dump_dir) {
     {
         std::lock_guard<std::mutex> lk(s_mutex);
@@ -450,9 +425,13 @@ static bool install(uintptr_t lib_base, const std::string& dump_dir) {
     loader_addr = syms.arm32_metadata_cache_init
                   ? syms.arm32_metadata_cache_init
                   : syms.arm32_metadata_loader;
+#elif defined(__x86_64__) || defined(__i386__)
+    loader_addr = syms.metadata_cache_initialize
+                  ? syms.metadata_cache_initialize
+                  : syms.metadata_loader;
 #endif
 
-    if (!loader_addr) { LOGW("[MetaHook] loader adresi bulunamadı"); return false; }
+    if (!loader_addr) { LOGW("[MetaHook] loader address not found"); return false; }
 
     bool ok = hook_engine::installInlineHook(
         reinterpret_cast<void*>(loader_addr),
@@ -460,26 +439,20 @@ static bool install(uintptr_t lib_base, const std::string& dump_dir) {
         reinterpret_cast<void**>(&s_orig_load)
     );
 
-    if (ok) LOGI("[MetaHook] inline hook kuruldu 0x%" PRIxPTR, loader_addr);
-    else    LOGE("[MetaHook] inline hook başarısız");
+    if (ok) LOGI("[MetaHook] inline hook installed 0x%" PRIxPTR, loader_addr);
+    else    LOGE("[MetaHook] inline hook failed");
     return ok;
 }
 
-// Hot-reload için hook durumunu sıfırla
 static void resetForReload(const std::string& new_dump_dir) {
     std::lock_guard<std::mutex> lk(s_mutex);
     s_dump_dir = new_dump_dir;
     s_fired.store(false, std::memory_order_release);
-    LOGI("[MetaHook] hot-reload sıfırlandı dump_dir=%s", new_dump_dir.c_str());
+    LOGI("[MetaHook] hot-reload reset dump_dir=%s", new_dump_dir.c_str());
 }
 
 } // namespace metadata_hook
 
-// =============================================================================
-//  dlopen hook — libil2cpp.so yüklendiği anda yakalamak için
-//  Protected_Breaker aktifse postAppSpecialize'da kurulur.
-//  SADECE hedef uygulama sürecinde çalışır.
-// =============================================================================
 static void* (*s_orig_dlopen)(const char*, int) = nullptr;
 
 static void* hooked_dlopen(const char* path, int flags) {
@@ -487,7 +460,7 @@ static void* hooked_dlopen(const char* path, int flags) {
     if (handle && path && strstr(path, "libil2cpp.so")) {
         bool expected = false;
         if (s_early_hook_fired.compare_exchange_strong(expected, true)) {
-            LOGI("EARLY HOOK: libil2cpp.so yüklendi path=%s", path);
+            LOGI("EARLY HOOK: libil2cpp.so loaded path=%s", path);
 
             std::string out;
             config::DumperConfig cfg;
@@ -498,15 +471,13 @@ static void* hooked_dlopen(const char* path, int flags) {
             }
 
             std::thread([out = std::move(out), cfg = std::move(cfg), handle]() mutable {
-                // Kütüphanenin tam yüklenmesi için kısa bekleme (~30 ms)
                 int efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
                 if (efd >= 0) {
                     struct pollfd pf = { efd, POLLIN, 0 };
-                    poll(&pf, 1, 30); // 30 ms yeterli
+                    poll(&pf, 1, 30);
                     ::close(efd);
                 }
 
-                // Base adresi bul
                 uintptr_t base = 0;
                 Dl_info   di{};
                 if (dladdr(handle, &di) && di.dli_fbase)
@@ -526,7 +497,6 @@ static void* hooked_dlopen(const char* path, int flags) {
     return handle;
 }
 
-// dlopen hook'unu kur — inline hook dene, başarısız olursa GOT patch yap
 static bool installDlopenHook(const std::string& out_dir,
                                const config::DumperConfig& cfg)
 {
@@ -542,33 +512,27 @@ static bool installDlopenHook(const std::string& out_dir,
             reinterpret_cast<void*>(hooked_dlopen),
             reinterpret_cast<void**>(&s_orig_dlopen)))
     {
-        LOGI("dlopen hook kuruldu (inline hook)");
+        LOGI("dlopen hook installed (inline hook)");
         return true;
     }
 
-    // Inline hook başarısız → GOT patch dene
     if (hook_engine::patchGotSlot(
             reinterpret_cast<void*>(dlopen),
             reinterpret_cast<void*>(hooked_dlopen),
             reinterpret_cast<void**>(&s_orig_dlopen)))
     {
-        LOGI("dlopen hook kuruldu (GOT patch)");
-        s_orig_dlopen = dlopen; // Güvenli fallback
+        LOGI("dlopen hook installed (GOT patch)");
+        s_orig_dlopen = dlopen;
         return true;
     }
 
-    LOGW("dlopen hook başarısız — libil2cpp.so polling moduna geçildi");
+    LOGW("dlopen hook failed — polling mode");
     return false;
 }
 
-// =============================================================================
-//  il2cpp_api namespace — IL2CPP fonksiyon pointer tablosu
-//  Semboller dlopen + pattern scan ile doldurulur.
-// =============================================================================
 namespace il2cpp_api {
 
 struct FunctionTable {
-    // Temel domain/assembly API
     bool           (*init)(const char*, int)                                             = nullptr;
     Il2CppDomain*  (*domain_get)()                                                       = nullptr;
     const Il2CppAssembly** (*domain_get_assemblies)(const Il2CppDomain*, size_t*)        = nullptr;
@@ -576,8 +540,6 @@ struct FunctionTable {
     const char*    (*image_get_name)(const Il2CppImage*)                                 = nullptr;
     size_t         (*image_get_class_count)(const Il2CppImage*)                          = nullptr;
     Il2CppClass*   (*image_get_class)(const Il2CppImage*, size_t)                        = nullptr;
-
-    // Sınıf API
     const Il2CppType* (*class_get_type)(Il2CppClass*)                                   = nullptr;
     Il2CppClass*   (*class_from_type)(const Il2CppType*)                                 = nullptr;
     const char*    (*class_get_name)(Il2CppClass*)                                       = nullptr;
@@ -599,29 +561,21 @@ struct FunctionTable {
     Il2CppClass*   (*class_from_name)(const Il2CppImage*, const char*, const char*)      = nullptr;
     Il2CppClass*   (*class_from_system_type)(Il2CppReflectionType*)                      = nullptr;
     const Il2CppImage* (*get_corlib)()                                                   = nullptr;
-
-    // Alan (Field) API
     uint32_t       (*field_get_flags)(FieldInfo*)                                        = nullptr;
     const char*    (*field_get_name)(FieldInfo*)                                         = nullptr;
     size_t         (*field_get_offset)(FieldInfo*)                                       = nullptr;
     const Il2CppType* (*field_get_type)(FieldInfo*)                                      = nullptr;
     void           (*field_static_get_value)(FieldInfo*, void*)                          = nullptr;
-
-    // Özellik (Property) API
     uint32_t       (*property_get_flags)(PropertyInfo*)                                  = nullptr;
     const MethodInfo* (*property_get_get_method)(PropertyInfo*)                          = nullptr;
     const MethodInfo* (*property_get_set_method)(PropertyInfo*)                          = nullptr;
     const char*    (*property_get_name)(PropertyInfo*)                                   = nullptr;
-
-    // Metot API
     const Il2CppType* (*method_get_return_type)(const MethodInfo*)                       = nullptr;
     const char*    (*method_get_name)(const MethodInfo*)                                 = nullptr;
     uint32_t       (*method_get_param_count)(const MethodInfo*)                          = nullptr;
     const Il2CppType* (*method_get_param)(const MethodInfo*, uint32_t)                   = nullptr;
     uint32_t       (*method_get_flags)(const MethodInfo*, uint32_t*)                     = nullptr;
     const char*    (*method_get_param_name)(const MethodInfo*, uint32_t)                 = nullptr;
-
-    // Tip / Thread API
     bool           (*type_is_byref)(const Il2CppType*)                                   = nullptr;
     Il2CppThread*  (*thread_attach)(Il2CppDomain*)                                       = nullptr;
     bool           (*is_vm_thread)(Il2CppThread*)                                        = nullptr;
@@ -631,16 +585,14 @@ struct FunctionTable {
 static FunctionTable g_api;
 static uint64_t      g_il2cpp_base = 0;
 
-// Sembol çözücü — başarısız olursa LOGW yaz (crash değil)
 template<typename T>
 static void resolveSymbol(void* handle, const char* name, T& out) {
     if (!handle || !name) return;
     void* sym = dlsym(handle, name);
     if (sym) out = reinterpret_cast<T>(sym);
-    else     LOGW("symbol çözülemedi: %s", name);
+    else     LOGW("symbol not resolved: %s", name);
 }
 
-// Pattern scan fallback
 template<typename T>
 static void applyFallback(uintptr_t addr, T& out) {
     if (!out && addr && scanner::isReadableAddress(addr)) {
@@ -649,18 +601,13 @@ static void applyFallback(uintptr_t addr, T& out) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// populateFunctionTable: IL2CPP sembollerini dlsym + pattern scan ile doldur
-// ─────────────────────────────────────────────────────────────────────────────
 static void populateFunctionTable(uintptr_t base) {
-    // RTLD_NOLOAD → zaten yüklüyse handle al, yoklamak için yükleme
     void* handle = dlopen("libil2cpp.so", RTLD_NOLOAD | RTLD_NOW);
-    if (!handle) LOGW("dlopen RTLD_NOLOAD başarısız — pattern scan moduna geçildi");
+    if (!handle) LOGW("dlopen RTLD_NOLOAD failed — pattern scan mode");
 
     if (handle) {
         auto r = [&](const char* name, auto& out) { resolveSymbol(handle, name, out); };
 
-        // Temel API sembolleri
         r("il2cpp_init",                       g_api.init);
         r("il2cpp_domain_get",                 g_api.domain_get);
         r("il2cpp_domain_get_assemblies",      g_api.domain_get_assemblies);
@@ -709,7 +656,6 @@ static void populateFunctionTable(uintptr_t base) {
         r("il2cpp_is_vm_thread",               g_api.is_vm_thread);
         r("il2cpp_string_new",                 g_api.string_new);
 
-        // Mangled isim fallback — bazı Unity versiyonları C++ sembolü kullanır
         if (!g_api.domain_get) {
             void* s = dlsym(handle, "_ZN6il2cpp2vm6Domain3GetEv");
             if (s) g_api.domain_get = reinterpret_cast<decltype(g_api.domain_get)>(s);
@@ -721,13 +667,12 @@ static void populateFunctionTable(uintptr_t base) {
         }
     }
 
-    // Kritik semboller eksikse tam pattern scan yap
     const bool critical_missing =
         !g_api.domain_get || !g_api.domain_get_assemblies ||
         !g_api.image_get_class || !g_api.thread_attach || !g_api.is_vm_thread;
 
     if (critical_missing) {
-        LOGW("Kritik semboller eksik — tam adaptif pattern scan başlıyor");
+        LOGW("Critical symbols missing — full adaptive pattern scan starting");
         auto s = scanner::scanAllSymbols(base);
         applyFallback(s.domain_get,                 g_api.domain_get);
         applyFallback(s.domain_get_assemblies,      g_api.domain_get_assemblies);
@@ -743,20 +688,14 @@ static void populateFunctionTable(uintptr_t base) {
         applyFallback(s.arm32_image_get_class,       g_api.image_get_class);
         applyFallback(s.arm32_thread_attach,         g_api.thread_attach);
 #endif
-        if (!g_api.domain_get)            LOGE("FATAL: domain_get çözülemedi");
-        if (!g_api.domain_get_assemblies) LOGE("FATAL: domain_get_assemblies çözülemedi");
-        if (!g_api.image_get_class)       LOGW("image_get_class yok — reflection fallback");
+        if (!g_api.domain_get)            LOGE("FATAL: domain_get unresolved");
+        if (!g_api.domain_get_assemblies) LOGE("FATAL: domain_get_assemblies unresolved");
+        if (!g_api.image_get_class)       LOGW("image_get_class missing — reflection fallback");
     }
 }
 
 } // namespace il2cpp_api
 
-// =============================================================================
-//  Dump yardımcı fonksiyonları — IL2CPP metadatasını C++ header / Frida
-//  script olarak diske yazar.
-// =============================================================================
-
-// Metot erişim modifier'ını string olarak döner
 static std::string buildMethodModifier(uint32_t flags) {
     std::stringstream out;
     switch (flags & METHOD_ATTRIBUTE_MEMBER_ACCESS_MASK) {
@@ -784,7 +723,6 @@ static std::string buildMethodModifier(uint32_t flags) {
     return out.str();
 }
 
-// Null-safe sınıf adı
 static std::string safeClassName(Il2CppClass* klass) {
     if (!klass) return "object";
     auto& api  = il2cpp_api::g_api;
@@ -792,27 +730,23 @@ static std::string safeClassName(Il2CppClass* klass) {
     return safeStr(name, "object");
 }
 
-// Metot yapısı
 struct MethodEntry {
     std::string name, return_type, modifier;
     uint64_t    rva = 0, va = 0;
-    std::vector<std::pair<std::string, std::string>> params; // {tip, isim}
+    std::vector<std::pair<std::string, std::string>> params;
 };
 
-// Alan (field) yapısı
 struct FieldEntry {
     std::string name, type_name, modifier;
     uint64_t    offset = 0;
     bool        is_static = false;
 };
 
-// Özellik (property) yapısı
 struct PropertyEntry {
     std::string name, type_name, modifier;
     bool        has_getter = false, has_setter = false;
 };
 
-// Sınıf yapısı
 struct ClassEntry {
     std::string name, ns, parent, full_name;
     bool        is_abstract = false, is_interface = false,
@@ -824,9 +758,6 @@ struct ClassEntry {
     std::vector<std::string>   interfaces;
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tip adını IL2CppType* → C# string olarak çözer
-// ─────────────────────────────────────────────────────────────────────────────
 static std::string resolveTypeName(const Il2CppType* t) {
     if (!t) return "void";
     auto& api = il2cpp_api::g_api;
@@ -835,14 +766,12 @@ static std::string resolveTypeName(const Il2CppType* t) {
     Il2CppClass* klass = api.class_from_type ? api.class_from_type(t) : nullptr;
     std::string  base  = safeClassName(klass);
 
-    // Jenerik parametre desteği
     if (klass && api.class_is_generic && api.class_is_generic(klass)) {
         base += "<>";
     } else if (klass && api.class_is_inflated && api.class_is_inflated(klass)) {
         base += "<T>";
     }
 
-    // Dizi türleri
     if (t->type == IL2CPP_TYPE_SZARRAY || t->type == IL2CPP_TYPE_ARRAY) {
         base += "[]";
     }
@@ -850,9 +779,6 @@ static std::string resolveTypeName(const Il2CppType* t) {
     return base;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Bir sınıfın tüm metotlarını çıkarır
-// ─────────────────────────────────────────────────────────────────────────────
 static std::vector<MethodEntry> extractMethods(Il2CppClass* klass) {
     std::vector<MethodEntry> result;
     auto& api = il2cpp_api::g_api;
@@ -882,7 +808,6 @@ static std::vector<MethodEntry> extractMethods(Il2CppClass* klass) {
             e.params.emplace_back(resolveTypeName(pt), safeStr(pn, "arg"));
         }
 
-        // RVA ve VA hesapla
         if (method->methodPointer) {
             e.va  = static_cast<uint64_t>(
                 reinterpret_cast<uintptr_t>(method->methodPointer));
@@ -895,7 +820,6 @@ static std::vector<MethodEntry> extractMethods(Il2CppClass* klass) {
     return result;
 }
 
-// Alanları çıkarır
 static std::vector<FieldEntry> extractFields(Il2CppClass* klass) {
     std::vector<FieldEntry> result;
     auto& api = il2cpp_api::g_api;
@@ -917,7 +841,6 @@ static std::vector<FieldEntry> extractFields(Il2CppClass* klass) {
     return result;
 }
 
-// Özellikleri çıkarır
 static std::vector<PropertyEntry> extractProperties(Il2CppClass* klass) {
     std::vector<PropertyEntry> result;
     auto& api = il2cpp_api::g_api;
@@ -942,9 +865,6 @@ static std::vector<PropertyEntry> extractProperties(Il2CppClass* klass) {
     return result;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// C++ header çıktısı — dump/{image_name}.h
-// ─────────────────────────────────────────────────────────────────────────────
 static void writeCppHeader(const std::string& out_dir,
                            const std::string& image_name,
                            const std::vector<ClassEntry>& classes)
@@ -954,27 +874,23 @@ static void writeCppHeader(const std::string& out_dir,
 
     std::string path = out_dir + "/" + image_name + ".h";
     std::ofstream f(path);
-    if (!f.is_open()) { LOGE("header yaz: %s açılamadı", path.c_str()); return; }
+    if (!f.is_open()) { LOGE("header write: %s failed", path.c_str()); return; }
 
-    f << "// Eaquel IL2CPP Dumper — Auto-generated C++ Header\n"
-      << "// Image: " << image_name << "\n"
-      << "#pragma once\n#include <cstdint>\n\n";
+    f << "#pragma once\n#include <cstdint>\n\n";
 
     for (auto& cls : classes) {
-        if (!cls.ns.empty()) f << "// namespace " << cls.ns << "\n";
+        if (!cls.ns.empty()) f << "namespace " << cls.ns << " {\n";
         if (cls.is_interface) f << "struct /* interface */ " << cls.name;
         else if (cls.is_enum) f << "enum class " << cls.name;
         else                  f << "struct " << cls.name;
         if (!cls.parent.empty() && cls.parent != "object")
             f << " : public " << cls.parent;
-        f << " { // " << cls.full_name << "\n";
+        f << " {\n";
 
-        // Alanlar
         for (auto& fld : cls.fields) {
             f << "    " << fld.modifier << fld.type_name << " " << fld.name
-              << "; // offset=0x" << std::hex << fld.offset << std::dec << "\n";
+              << "; // 0x" << std::hex << fld.offset << std::dec << "\n";
         }
-        // Metotlar
         for (auto& m : cls.methods) {
             f << "    " << m.modifier << m.return_type << " " << m.name << "(";
             for (size_t i = 0; i < m.params.size(); ++i) {
@@ -983,14 +899,13 @@ static void writeCppHeader(const std::string& out_dir,
             }
             f << "); // RVA: 0x" << std::hex << m.rva << std::dec << "\n";
         }
-        f << "};\n\n";
+        f << "};\n";
+        if (!cls.ns.empty()) f << "} // namespace " << cls.ns << "\n";
+        f << "\n";
     }
-    LOGI("C++ header yazıldı: %s (%zu sınıf)", path.c_str(), classes.size());
+    LOGI("C++ header written: %s (%zu classes)", path.c_str(), classes.size());
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Frida script çıktısı — dump/{image_name}.js
-// ─────────────────────────────────────────────────────────────────────────────
 static void writeFridaScript(const std::string& out_dir,
                              const std::string& image_name,
                              const std::vector<ClassEntry>& classes)
@@ -1000,19 +915,15 @@ static void writeFridaScript(const std::string& out_dir,
 
     std::string path = out_dir + "/" + image_name + ".js";
     std::ofstream f(path);
-    if (!f.is_open()) { LOGE("frida script yaz: %s açılamadı", path.c_str()); return; }
+    if (!f.is_open()) { LOGE("frida script write: %s failed", path.c_str()); return; }
 
-    f << "// Eaquel IL2CPP Dumper — Auto-generated Frida Script\n"
-      << "// Image: " << image_name << "\n"
-      << "// Usage: frida -U -f com.example.app -l " << image_name << ".js\n\n"
-      << "var il2cpp_base = Module.findBaseAddress('libil2cpp.so');\n"
+    f << "var il2cpp_base = Module.findBaseAddress('libil2cpp.so');\n"
       << "if (!il2cpp_base) throw new Error('libil2cpp.so not found');\n\n";
 
     for (auto& cls : classes) {
         for (auto& m : cls.methods) {
             if (!m.rva) continue;
-            f << "// " << cls.full_name << "::" << m.name << "\n"
-              << "var addr_" << cls.name << "_" << m.name
+            f << "var addr_" << cls.name << "_" << m.name
               << " = il2cpp_base.add(0x" << std::hex << m.rva << std::dec << ");\n"
               << "Interceptor.attach(addr_" << cls.name << "_" << m.name << ", {\n"
               << "    onEnter: function(args) {},\n"
@@ -1020,32 +931,24 @@ static void writeFridaScript(const std::string& out_dir,
               << "});\n\n";
         }
     }
-    LOGI("Frida script yazıldı: %s (%zu sınıf)", path.c_str(), classes.size());
+    LOGI("Frida script written: %s (%zu classes)", path.c_str(), classes.size());
 }
 
-// =============================================================================
-//  runApiInit — IL2CPP base'i ayarla ve fonksiyon tablosunu doldur
-// =============================================================================
 static void runApiInit(uintptr_t base) {
     il2cpp_api::g_il2cpp_base = static_cast<uint64_t>(base);
     il2cpp_api::populateFunctionTable(base);
 }
 
-// =============================================================================
-//  runDump — Tüm image'ları tarayıp metadatayı diske yazar
-// =============================================================================
 static void runDump(const std::string& out_dir, const config::DumperConfig& cfg) {
     auto& api = il2cpp_api::g_api;
     if (!api.domain_get) {
-        LOGE("runDump: domain_get null — dump iptal");
+        LOGE("runDump: domain_get null — dump cancelled");
         return;
     }
 
-    // IL2CPP domain'ini al
     Il2CppDomain* domain = api.domain_get();
     if (!domain) { LOGE("runDump: domain null"); return; }
 
-    // Thread'i IL2CPP VM'e ekle (gerekli, aksi hâlde crash)
     if (api.thread_attach) api.thread_attach(domain);
 
     size_t count = 0;
@@ -1053,16 +956,14 @@ static void runDump(const std::string& out_dir, const config::DumperConfig& cfg)
                                         ? api.domain_get_assemblies(domain, &count)
                                         : nullptr;
     if (!assemblies || !count) {
-        LOGE("runDump: assembly listesi boş"); return;
+        LOGE("runDump: assembly list empty"); return;
     }
 
-    LOGI("runDump: %zu assembly bulundu", count);
+    LOGI("runDump: %zu assemblies found", count);
 
-    // Çıktı dizini oluştur
     struct stat st{};
     if (stat(out_dir.c_str(), &st) != 0) mkdir(out_dir.c_str(), 0777);
 
-    // Her assembly → image → sınıflar
     for (size_t ai = 0; ai < count; ++ai) {
         const Il2CppAssembly* asm_ptr = assemblies[ai];
         if (!asm_ptr) continue;
@@ -1073,13 +974,12 @@ static void runDump(const std::string& out_dir, const config::DumperConfig& cfg)
 
         const char* img_name = api.image_get_name ? api.image_get_name(image) : nullptr;
         std::string name     = safeStr(img_name, "unknown");
-        // .dll uzantısını kaldır
         if (name.size() > 4 && name.substr(name.size() - 4) == ".dll")
             name = name.substr(0, name.size() - 4);
 
         size_t cls_count = api.image_get_class_count
                            ? api.image_get_class_count(image) : 0;
-        LOGI("image[%zu]: %s (%zu sınıf)", ai, name.c_str(), cls_count);
+        LOGI("image[%zu]: %s (%zu classes)", ai, name.c_str(), cls_count);
 
         std::vector<ClassEntry> classes;
         classes.reserve(cls_count);
@@ -1110,29 +1010,19 @@ static void runDump(const std::string& out_dir, const config::DumperConfig& cfg)
             classes.push_back(std::move(e));
         }
 
-        // Dosyalara yaz
         if (cfg.Cpp_Header)   writeCppHeader  (out_dir, name, classes);
         if (cfg.Frida_Script) writeFridaScript (out_dir, name, classes);
     }
-    LOGI("runDump: tamamlandı  out_dir=%s", out_dir.c_str());
+    LOGI("runDump: complete  out_dir=%s", out_dir.c_str());
 }
 
-// =============================================================================
-//  hackStart  —  KATMAN 4: 30 saniyelik timeout koruması
-//
-//  libil2cpp.so'yu exponential backoff ile bekler.
-//  MAX 30 saniye geçerse döner (sistem kilitlenmez).
-//  SADECE hedef uygulama sürecinde çağrılır (Katman 1-2 güvencesi).
-// =============================================================================
 namespace {
 
-// Bekleme süresi hesabı — exponential backoff, max 2 sn
 static int64_t exponentialDelay(int attempt) {
     int64_t ms = 200LL * (1LL << std::min(attempt, 5));
     return std::min(ms, static_cast<int64_t>(2000));
 }
 
-// poll() tabanlı stealth bekleme — CPU'yu meşgul etmez
 static void stealthWait(int64_t ms) {
     int efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (efd >= 0) {
@@ -1144,165 +1034,149 @@ static void stealthWait(int64_t ms) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// hackStart — Katman 4 timeout ile libil2cpp.so bekler ve dump başlatır
-// ─────────────────────────────────────────────────────────────────────────────
 static void hackStart(
     const std::string&          game_dir,
     const std::string&          out_dir,
     const config::DumperConfig& cfg
 ) {
-    // ── KATMAN 1 ───────────────────────────────────────────────────────────
-    // Bu güvenlik her hackStart() çağrısında yeniden kontrol edilir.
-    // Herhangi bir kod yolu Zygote'dan buraya ulaşırsa durur.
     if (isZygoteProcess()) {
-        LOGE("[BootGuard] hackStart Zygote'dan çağrıldı! ANINDA ÇIKILIYOR.");
+        LOGE("[BootGuard] hackStart called from Zygote — aborting");
         return;
     }
 
-    LOGI("hackStart başladı  tid=%d  game=%s  out=%s",
-         gettid(), game_dir.c_str(), out_dir.c_str());
+    if (!isApiLevelSupported()) {
+        int api = getAndroidApiLevel();
+        LOGE("[ApiGuard] Android API %d not in supported range [%d-%d] — aborting",
+             api, config::kAndroidMinApi, config::kAndroidMaxApi);
+        return;
+    }
 
-    // ── KATMAN 4 ───────────────────────────────────────────────────────────
-    // 30 saniye timeout — her deneme arasında exponential backoff
-    constexpr int   kMaxRetries  = 20;
-    constexpr int64_t kMaxTotalMs = 30'000; // 30 saniye
-    int64_t elapsed_ms           = 0;
+    LOGI("hackStart tid=%d  game=%s  out=%s  api=%d",
+         gettid(), game_dir.c_str(), out_dir.c_str(), getAndroidApiLevel());
+
+    constexpr int     kMaxRetries  = 20;
+    constexpr int64_t kMaxTotalMs  = 30'000;
+    int64_t           elapsed_ms   = 0;
 
     for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
         uintptr_t base = scanner::findLibBase("libil2cpp.so");
         if (base) {
-            LOGI("libil2cpp.so bulundu base=0x%" PRIxPTR " attempt=%d", base, attempt);
+            LOGI("libil2cpp.so found base=0x%" PRIxPTR " attempt=%d", base, attempt);
 
-            // Protected_Breaker: metadata hook'u kur
             if (cfg.Protected_Breaker && !metadata_hook::s_fired.load())
                 metadata_hook::install(base, out_dir);
 
             runApiInit(base);
             runDump(out_dir, cfg);
-            return; // ✅ Başarılı
+            return;
         }
 
-        // Timeout kontrolü
         auto delay = exponentialDelay(attempt);
         elapsed_ms += delay;
         if (elapsed_ms >= kMaxTotalMs) {
-            LOGE("[BootGuard] TIMEOUT: 30 sn içinde libil2cpp.so bulunamadı! Durduruluyor.");
-            return; // 🛡️ Bootloop önlendi
+            LOGE("[BootGuard] TIMEOUT: libil2cpp.so not found in 30s — stopping");
+            return;
         }
 
-        LOGI("libil2cpp.so hazır değil attempt=%d delay=%" PRId64 "ms elapsed=%" PRId64 "ms",
+        LOGI("libil2cpp.so not ready attempt=%d delay=%" PRId64 "ms elapsed=%" PRId64 "ms",
              attempt, delay, elapsed_ms);
         stealthWait(delay);
     }
-    LOGE("libil2cpp.so %d denemeden sonra bulunamadı tid=%d", kMaxRetries, gettid());
+    LOGE("libil2cpp.so not found after %d attempts tid=%d", kMaxRetries, gettid());
 }
 
-// hackStart'a hazırlık — mimari ve API seviyesini logla
 static void hackPrepare(
     const std::string&          game_dir,
     const std::string&          out_dir,
     const config::DumperConfig& cfg
 ) {
-    LOGI("hack_prepare tid=%d", gettid());
-    LOGI("api_level=%d", android_get_device_api_level());
+    LOGI("hack_prepare tid=%d api=%d", gettid(), getAndroidApiLevel());
 #if defined(__arm__)
-    LOGI("mode: ARMv7/Thumb-2 (32-bit) [auto-detected]");
+    LOGI("mode: ARMv7/Thumb-2 (32-bit)");
 #elif defined(__aarch64__)
-    LOGI("mode: AArch64 (64-bit) [auto-detected]");
+    LOGI("mode: AArch64 (64-bit)");
+#elif defined(__x86_64__)
+    LOGI("mode: x86_64 (64-bit emulator)");
+#elif defined(__i386__)
+    LOGI("mode: x86 (32-bit emulator)");
 #endif
     hackStart(game_dir, out_dir, cfg);
 }
 
 } // anonymous namespace
 
-// =============================================================================
-//  EaquelDumperModule  —  ReZygisk Modül Sınıfı
-//
-//  KATMAN 2: ReZygisk yaşam döngüsü koruması
-//  ─────────────────────────────────────────────────────────────────────────
-//  onLoad()            → Zygote'da çalışır — HİÇBİR hack kodu yok
-//  preAppSpecialize()  → Hedef paket mi? Değilse DLCLOSE_MODULE_LIBRARY
-//  postAppSpecialize() → SADECE hedef pakette hack başlatılır
-// =============================================================================
 class EaquelDumperModule : public rezygisk::ModuleBase {
 public:
 
-    // ── onLoad ────────────────────────────────────────────────────────────
-    // Zygote içinde çağrılır. Sadece api/env pointer'larını sakla.
-    // HAK YOK, TARAMA YOK, THREAD YOK.
     void onLoad(rezygisk::Api* api, JNIEnv* env) override {
         this->api = api;
         this->env = env;
-        // Güvenlik: Burada hiçbir şey yapma.
-        // Zygote'da çalıştığımız için hack kodu tetiklenmemelidir.
-        LOGI("[Module] onLoad: API ve JNIEnv kaydedildi (Zygote güvenli mod)");
+        LOGI("[Module] onLoad: registered (Zygote safe mode)");
     }
 
-    // ── preAppSpecialize ──────────────────────────────────────────────────
-    // Uygulama fork edilmeden önce çağrılır.
-    // Hedef paketi kontrol et; hedef değilse kütüphaneyi kapat.
     void preAppSpecialize(rezygisk::AppSpecializeArgs* args) override {
         if (!args) {
-            // args null ise güvenli tarafta kal
             api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
             return;
         }
 
-        // Denylist'e alınmış process → kapat
-        uint32_t flags = api->getFlags();
-        if (flags & static_cast<uint32_t>(rezygisk::StateFlag::PROCESS_ON_DENYLIST)) {
-            LOGI("[Module] Process denylist'te — modül kapatılıyor");
-            api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
-            return;
-        }
-
-        // Paket adı ve uygulama dizinini al
         const char* pkg = nullptr;
         const char* dir = nullptr;
         if (args->nice_name)    pkg = env->GetStringUTFChars(args->nice_name,    nullptr);
         if (args->app_data_dir) dir = env->GetStringUTFChars(args->app_data_dir, nullptr);
 
-        preSpecialize(pkg ? pkg : "", dir ? dir : "");
+        std::string pkg_str = pkg ? pkg : "";
+        std::string dir_str = dir ? dir : "";
 
         if (pkg) env->ReleaseStringUTFChars(args->nice_name,    pkg);
         if (dir) env->ReleaseStringUTFChars(args->app_data_dir, dir);
-    }
 
-    // ── postAppSpecialize ─────────────────────────────────────────────────
-    // Uygulama fork edildikten SONRA, SADECE hedef süreçte çağrılır.
-    // Artık Zygote değil, uygulama sürecindeyiz — hack başlatmak güvenli.
-    void postAppSpecialize(const rezygisk::AppSpecializeArgs*) override {
-        if (!enable_hack) return; // Hedef değilse çık
-
-        // ── KATMAN 1 son kontrol ──────────────────────────────────────────
-        // postAppSpecialize zaten hedef süreçte çalışır ama bir kez daha
-        // kontrol ederek çift güvenlik sağlıyoruz.
-        if (isZygoteProcess()) {
-            LOGE("[BootGuard] postAppSpecialize Zygote'dan çağrıldı! İptal edildi.");
+        if (shouldIgnoreProcess(pkg_str)) {
+            api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
             return;
         }
 
-        LOGI("[Module] postAppSpecialize: hedef süreçte hack başlatılıyor");
+        active_cfg = config::loadConfig();
 
-        // SIGSEGV handler kur (sadece hedef süreçte)
+        if (active_cfg.Target_Game != "!" &&
+            !process_filter::isThirdPartyApp(pkg_str) &&
+            !isInstalledAsUserApp(pkg_str))
+        {
+            api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
+            return;
+        }
+
+        preSpecialize(pkg_str, dir_str);
+    }
+
+    void postAppSpecialize(const rezygisk::AppSpecializeArgs*) override {
+        if (!enable_hack) return;
+
+        if (isZygoteProcess()) {
+            LOGE("[BootGuard] postAppSpecialize from Zygote — cancelled");
+            return;
+        }
+
+        if (!isApiLevelSupported()) {
+            LOGE("[ApiGuard] unsupported API level — cancelled");
+            return;
+        }
+
+        LOGI("[Module] postAppSpecialize: starting hack in target process");
+
         installSigsegvHandler();
 
-        // dlopen hook kur (Protected_Breaker aktifse)
         if (active_cfg.Protected_Breaker) {
             installDlopenHook(out_dir, active_cfg);
         }
 
-        // Hot-reload config watcher başlat
         startConfigWatcher();
 
-        // Erken hook zaten aktifse polling thread gerekmiyor
         if (s_orig_dlopen && s_orig_dlopen != dlopen) {
-            LOGI("postAppSpecialize: dlopen early hook aktif, watcher başlatıldı");
+            LOGI("postAppSpecialize: dlopen early hook active");
             return;
         }
 
-        // Ayrı thread'de hack başlat — Zygisk callback'i bloke etme
         std::string g = game_dir;
         std::string o = out_dir;
         config::DumperConfig c;
@@ -1318,20 +1192,17 @@ public:
 private:
     rezygisk::Api*       api         = nullptr;
     JNIEnv*              env         = nullptr;
-    bool                 enable_hack = false;   // true ise hedef paket
+    bool                 enable_hack = false;
     std::string          game_dir, out_dir;
     config::DumperConfig active_cfg;
     config::ConfigWatcher watcher_;
     std::mutex            cfg_mutex_;
     std::atomic<bool>     dump_running_{false};
 
-    // ─────────────────────────────────────────────────────────────────────
-    // triggerReDump — Hot-reload sonrası dump'ı yeniden tetikler
-    // ─────────────────────────────────────────────────────────────────────
     void triggerReDump(const config::DumperConfig& new_cfg) {
         bool expected = false;
         if (!dump_running_.compare_exchange_strong(expected, true)) {
-            LOGI("hot-reload: dump zaten çalışıyor, atlanıyor");
+            LOGI("hot-reload: dump already running, skipping");
             return;
         }
 
@@ -1345,8 +1216,7 @@ private:
 
         uintptr_t base = scanner::findLibBase("libil2cpp.so");
         if (!base) {
-            // libil2cpp henüz yüklü değil → hackStart ile bekle
-            LOGW("hot-reload: libil2cpp.so henüz yüklü değil, hackStart başlatılıyor");
+            LOGW("hot-reload: libil2cpp.so not yet loaded, starting hackStart");
             std::string g = game_dir;
             config::DumperConfig c = new_cfg;
             std::thread([g = std::move(g), o = new_out, c = std::move(c),
@@ -1357,7 +1227,6 @@ private:
             return;
         }
 
-        // Zaten yüklüyse direkt dump
         config::DumperConfig c = new_cfg;
         std::thread([base, o = new_out, c = std::move(c), this]() mutable {
             runApiInit(base);
@@ -1366,9 +1235,6 @@ private:
         }).detach();
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // startConfigWatcher — config dosyasındaki değişiklikleri izler
-    // ─────────────────────────────────────────────────────────────────────
     void startConfigWatcher() {
         watcher_.start([this](const config::DumperConfig& new_cfg) {
             {
@@ -1376,7 +1242,7 @@ private:
                 active_cfg  = new_cfg;
                 s_early_cfg = new_cfg;
             }
-            LOGI("hot-reload: config güncellendi Target=%s Cpp=%d Frida=%d Out=%s",
+            LOGI("hot-reload: config updated Target=%s Cpp=%d Frida=%d Out=%s",
                  new_cfg.Target_Game.c_str(),
                  (int)new_cfg.Cpp_Header,
                  (int)new_cfg.Frida_Script,
@@ -1395,87 +1261,62 @@ private:
         });
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // preSpecialize — Hedef paket tespiti ve enable_hack bayrağı
-    // ─────────────────────────────────────────────────────────────────────
-    void preSpecialize(const char* pkg, const char* app_data_dir) {
-        active_cfg = config::loadConfig();
-
+    void preSpecialize(const std::string& pkg, const std::string& app_data_dir) {
         LOGI("preSpecialize: pkg=%s  dir=%s  Target=%s",
-             pkg ? pkg : "null",
-             app_data_dir ? app_data_dir : "null",
-             active_cfg.Target_Game.c_str());
+             pkg.c_str(), app_data_dir.c_str(), active_cfg.Target_Game.c_str());
 
         bool is_target = false;
 
         if (active_cfg.Target_Game == "!") {
-            // Joker: tüm paketler hedef
-            is_target = true;
-            LOGI("Target_Game=! → joker eşleşme için %s", pkg ? pkg : "?");
-        } else if (pkg && !active_cfg.Target_Game.empty()
+            if (process_filter::isThirdPartyApp(pkg) || isInstalledAsUserApp(pkg)) {
+                is_target = true;
+                LOGI("Target_Game=! wildcard match for third-party app %s", pkg.c_str());
+            }
+        } else if (!pkg.empty() && !active_cfg.Target_Game.empty()
                    && active_cfg.Target_Game == pkg) {
-            // Tam paket adı eşleşmesi
             is_target = true;
-        } else if (app_data_dir && !active_cfg.Target_Game.empty()
-                   && strstr(app_data_dir, active_cfg.Target_Game.c_str()) != nullptr) {
-            // app_data_dir yolunda geçiyor
+        } else if (!app_data_dir.empty() && !active_cfg.Target_Game.empty()
+                   && strstr(app_data_dir.c_str(), active_cfg.Target_Game.c_str()) != nullptr) {
             is_target = true;
-            LOGI("app_data_dir üzerinden hedef algılandı");
+            LOGI("target detected via app_data_dir");
         }
 
         if (!is_target) {
-            // Hedef değil → kütüphaneyi kapat, bellek israf etme
-            LOGI("Hedef paket değil → modül kapatılıyor");
+            LOGI("Not target package — closing module");
             api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
             return;
         }
 
-        LOGI("HEDEF ALGILANDI: %s  [64bit=%d]",
-             active_cfg.Target_Game.c_str(), (int)active_cfg.is_64bit);
+        LOGI("TARGET DETECTED: %s  [64bit=%d  api=%d]",
+             active_cfg.Target_Game.c_str(), (int)active_cfg.is_64bit, getAndroidApiLevel());
 
         enable_hack = true;
-        game_dir    = app_data_dir ? app_data_dir : "";
+        game_dir    = app_data_dir;
         out_dir     = active_cfg.Output.empty()
                       ? std::string(config::kFallbackOutput)
                       : active_cfg.Output;
 
-        LOGI("çıktı dizini: %s", out_dir.c_str());
+        LOGI("output dir: %s", out_dir.c_str());
     }
 };
 
-// =============================================================================
-//  REGISTER_REZYGISK_MODULE — Modülü ReZygisk'e kaydet
-//  Bu makro zygisk_module_entry ve rezygisk_module_entry sembollerini üretir.
-// =============================================================================
 REGISTER_REZYGISK_MODULE(EaquelDumperModule)
 
-// =============================================================================
-//  JNI_OnLoad — KATMAN 3: Zygote Güvenliği
-//
-//  Bu fonksiyon .so dosyası System.loadLibrary() ile yüklendiğinde
-//  otomatik tetiklenir. ReZygisk, Zygote'da da bu fonksiyonu çağırır.
-//
-//  SORUN: Önceki kodda Zygote'dayken hackStart() başlatılıyordu.
-//  ÇÖZÜM: isZygoteProcess() → true ise ANINDA JNI_VERSION_1_6 döndür.
-//         Zygote olmayan süreçlerde (direkt yükleme, test) normal çalış.
-// =============================================================================
 #if defined(__arm__) || defined(__aarch64__)
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     if (!vm) return JNI_ERR;
 
-    // ── KATMAN 3 ──────────────────────────────────────────────────────────
-    // Zygote süreci kontrolü — pozitifse ANINDA döndür
     if (isZygoteProcess()) {
-        // Zygote'dayız; hack başlatma, sadece başarılı dön.
-        // ReZygisk bu path'ten geçecek; onLoad/preAppSpecialize
-        // callback'leri ile doğru süreçte hacklenecek.
-        LOGI("[BootGuard] JNI_OnLoad: Zygote süreci — hack devre dışı (güvenli dönüş)");
+        LOGI("[BootGuard] JNI_OnLoad: Zygote process — safe return");
         return JNI_VERSION_1_6;
     }
 
-    // Buraya ReZygisk callback dışı (direkt dlopen ile yükleme) gelinirse
-    // normal çalışma modunu başlat.
-    LOGI("[JNI_OnLoad] Hedef süreçte çalışıyoruz, hack başlatılıyor");
+    if (!isApiLevelSupported()) {
+        LOGI("[ApiGuard] JNI_OnLoad: unsupported API — safe return");
+        return JNI_VERSION_1_6;
+    }
+
+    LOGI("[JNI_OnLoad] target process — starting hack");
     installSigsegvHandler();
 
     config::DumperConfig cfg = config::loadConfig();
@@ -1484,7 +1325,6 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
                       : cfg.Output;
     std::string game;
 
-    // reserved → "game_dir|out_dir" formatında bilgi taşıyabilir
     if (reserved) {
         std::string combined(static_cast<const char*>(reserved));
         auto sep = combined.find('|');
@@ -1503,9 +1343,8 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     std::string g = game;
     config::DumperConfig c = cfg;
 
-    // Thread'de çalıştır — JNI_OnLoad'u bloke etme
     std::thread([g = std::move(g), o = std::move(o), c = std::move(c)]() mutable {
-        hackStart(g, o, c); // Katman 4 timeout burada da aktif
+        hackStart(g, o, c);
     }).detach();
 
     return JNI_VERSION_1_6;

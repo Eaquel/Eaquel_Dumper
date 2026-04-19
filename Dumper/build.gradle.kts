@@ -21,6 +21,11 @@ android {
     compileSdk = 36
     ndkVersion = "29.0.14206865"
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
     defaultConfig {
         minSdk = 30
 
@@ -31,7 +36,7 @@ android {
                     "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
                     "-DCMAKE_BUILD_TYPE=Release"
                 )
-                abiFilters("arm64-v8a", "armeabi-v7a")
+                abiFilters("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
             }
         }
     }
@@ -51,7 +56,8 @@ android {
 
     externalNativeBuild {
         cmake {
-            path = file("Source/Main/Native/CMakeLists.txt")
+            path    = file("Source/Main/Native/CMakeLists.txt")
+            version = "4.3.1+"
         }
     }
 
@@ -68,9 +74,9 @@ androidComponents {
         val variantLower  = variant.name.lowercase()
         val skeletonDir   = outDir
 
-        val skeletonLibDir      = skeletonDir.resolve("lib")
-        val skeletonZygiskDir   = skeletonDir.resolve("zygisk")
-        val capturedLibName     = moduleLibraryName
+        val skeletonLibDir    = skeletonDir.resolve("lib")
+        val skeletonZygiskDir = skeletonDir.resolve("zygisk")
+        val capturedLibName   = moduleLibraryName
 
         val prepareTask = tasks.register<Sync>("prepareSkeleton$variantCapped") {
             dependsOn("strip${variantCapped}DebugSymbols")
@@ -79,19 +85,23 @@ androidComponents {
             from("$rootDir/Base") { exclude("module.prop") }
             from("$rootDir/Base") {
                 include("module.prop")
-                expand(mapOf(
-                    "id"          to magiskModuleId,
-                    "name"        to moduleName,
-                    "version"     to moduleVersion,
-                    "versionCode" to moduleVersionCode,
-                    "author"      to moduleAuthor,
-                    "description" to moduleDescription
-                ))
+                expand(
+                    mapOf(
+                        "id"          to magiskModuleId,
+                        "name"        to moduleName,
+                        "version"     to moduleVersion,
+                        "versionCode" to moduleVersionCode,
+                        "author"      to moduleAuthor,
+                        "description" to moduleDescription
+                    )
+                )
                 filter(mapOf("eol" to FixCrLfFilter.CrLf.newInstance("lf")), FixCrLfFilter::class.java)
             }
-            from(layout.buildDirectory.dir(
-                "intermediates/stripped_native_libs/$variantLower/strip${variantCapped}DebugSymbols/out/lib"
-            )) { into("lib") }
+            from(
+                layout.buildDirectory.dir(
+                    "intermediates/stripped_native_libs/$variantLower/strip${variantCapped}DebugSymbols/out/lib"
+                )
+            ) { into("lib") }
 
             doLast {
                 skeletonZygiskDir.mkdirs()
