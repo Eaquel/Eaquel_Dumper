@@ -34,9 +34,6 @@ public:
     virtual ~ModuleBase() = default;
 };
 
-// ────────────────────────────────────────────────────────────────────────
-//  Specialize argument structs
-// ────────────────────────────────────────────────────────────────────────
 struct AppSpecializeArgs {
     jint&         uid;
     jint&         gid;
