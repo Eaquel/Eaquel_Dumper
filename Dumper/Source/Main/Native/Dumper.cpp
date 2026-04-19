@@ -38,26 +38,24 @@ static inline const char* safeStr(const char* s, const char* fallback = "") {
 
 static void runApiInit(uintptr_t base);
 static void runDump(const std::string& out_dir, const config::DumperConfig& cfg);
+static void hackStart(const std::string&, const std::string&, const config::DumperConfig&);
 
 static std::string          s_early_out_dir;
 static config::DumperConfig s_early_cfg;
 static std::atomic<bool>    s_early_hook_fired{false};
 static std::mutex           s_early_cfg_mutex;
 
+static std::atomic<bool>    s_onload_dump_started{false};
+
 [[nodiscard]] static bool isZygoteProcess() noexcept {
     char cmdline[256] = {};
     int fd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
-    if (fd < 0) {
-        LOGW("[BootGuard] cmdline okunamadı errno=%d", errno);
-        return true;
-    }
+    if (fd < 0) return true;
     ssize_t n = read(fd, cmdline, sizeof(cmdline) - 1);
     close(fd);
     if (n <= 0) return true;
     bool is_zygote = (strncmp(cmdline, "zygote", 6) == 0);
-    if (is_zygote) {
-        LOGW("[BootGuard] ZYGOTE DETECTED cmdline='%s'", cmdline);
-    }
+    if (is_zygote) LOGW("[BootGuard] Zygote detected cmdline='%s'", cmdline);
     return is_zygote;
 }
 
@@ -354,13 +352,13 @@ static void persistDecryptedMetadata(const void* data, size_t size, const char* 
     std::vector<uint8_t> plaintext;
 
     if (state == entropy::MetadataState::Encrypted) {
-        LOGI("[MetaHook] Buffer encrypted — XOR key scan starting");
+        LOGI("[MetaHook] Buffer encrypted -- XOR key scan starting");
         auto key = entropy::discoverXorKey(buf, size);
         if (key.found && key.score >= 2) {
             plaintext = entropy::decryptBuffer(buf, size, key);
             LOGI("[MetaHook] Decrypt done key_len=%zu score=%d", key.key_len, key.score);
         } else {
-            LOGW("[MetaHook] XOR key unverified — writing raw buffer");
+            LOGW("[MetaHook] XOR key unverified -- writing raw buffer");
             plaintext.assign(buf, buf + size);
         }
     } else {
@@ -370,7 +368,7 @@ static void persistDecryptedMetadata(const void* data, size_t size, const char* 
     uint32_t out_magic = 0;
     if (plaintext.size() >= 4) memcpy(&out_magic, plaintext.data(), 4);
     if (out_magic != entropy::kIl2CppMetadataMagic)
-        LOGW("[MetaHook] Output magic 0x%08X — may still be encrypted", out_magic);
+        LOGW("[MetaHook] Output magic 0x%08X -- may still be encrypted", out_magic);
 
     std::lock_guard<std::mutex> lk(s_mutex);
     struct stat st{};
@@ -526,7 +524,7 @@ static bool installDlopenHook(const std::string& out_dir,
         return true;
     }
 
-    LOGW("dlopen hook failed — polling mode");
+    LOGW("dlopen hook failed -- polling mode");
     return false;
 }
 
@@ -603,7 +601,7 @@ static void applyFallback(uintptr_t addr, T& out) {
 
 static void populateFunctionTable(uintptr_t base) {
     void* handle = dlopen("libil2cpp.so", RTLD_NOLOAD | RTLD_NOW);
-    if (!handle) LOGW("dlopen RTLD_NOLOAD failed — pattern scan mode");
+    if (!handle) LOGW("dlopen RTLD_NOLOAD failed -- pattern scan mode");
 
     if (handle) {
         auto r = [&](const char* name, auto& out) { resolveSymbol(handle, name, out); };
@@ -672,7 +670,7 @@ static void populateFunctionTable(uintptr_t base) {
         !g_api.image_get_class || !g_api.thread_attach || !g_api.is_vm_thread;
 
     if (critical_missing) {
-        LOGW("Critical symbols missing — full adaptive pattern scan starting");
+        LOGW("Critical symbols missing -- full adaptive pattern scan starting");
         auto s = scanner::scanAllSymbols(base);
         applyFallback(s.domain_get,                 g_api.domain_get);
         applyFallback(s.domain_get_assemblies,      g_api.domain_get_assemblies);
@@ -690,7 +688,7 @@ static void populateFunctionTable(uintptr_t base) {
 #endif
         if (!g_api.domain_get)            LOGE("FATAL: domain_get unresolved");
         if (!g_api.domain_get_assemblies) LOGE("FATAL: domain_get_assemblies unresolved");
-        if (!g_api.image_get_class)       LOGW("image_get_class missing — reflection fallback");
+        if (!g_api.image_get_class)       LOGW("image_get_class missing -- reflection fallback");
     }
 }
 
@@ -942,7 +940,7 @@ static void runApiInit(uintptr_t base) {
 static void runDump(const std::string& out_dir, const config::DumperConfig& cfg) {
     auto& api = il2cpp_api::g_api;
     if (!api.domain_get) {
-        LOGE("runDump: domain_get null — dump cancelled");
+        LOGE("runDump: domain_get null -- dump cancelled");
         return;
     }
 
@@ -1040,13 +1038,13 @@ static void hackStart(
     const config::DumperConfig& cfg
 ) {
     if (isZygoteProcess()) {
-        LOGE("[BootGuard] hackStart called from Zygote — aborting");
+        LOGE("[BootGuard] hackStart called from Zygote -- aborting");
         return;
     }
 
     if (!isApiLevelSupported()) {
         int api = getAndroidApiLevel();
-        LOGE("[ApiGuard] Android API %d not in supported range [%d-%d] — aborting",
+        LOGE("[ApiGuard] Android API %d not in supported range [%d-%d] -- aborting",
              api, config::kAndroidMinApi, config::kAndroidMaxApi);
         return;
     }
@@ -1074,7 +1072,7 @@ static void hackStart(
         auto delay = exponentialDelay(attempt);
         elapsed_ms += delay;
         if (elapsed_ms >= kMaxTotalMs) {
-            LOGE("[BootGuard] TIMEOUT: libil2cpp.so not found in 30s — stopping");
+            LOGE("[BootGuard] TIMEOUT: libil2cpp.so not found in 30s -- stopping");
             return;
         }
 
@@ -1103,15 +1101,60 @@ static void hackPrepare(
     hackStart(game_dir, out_dir, cfg);
 }
 
+static void launchOnLoadDump(const config::DumperConfig& cfg) {
+    bool expected = false;
+    if (!s_onload_dump_started.compare_exchange_strong(expected, true)) {
+        LOGI("[onLoad-Dump] already launched, skipping");
+        return;
+    }
+
+    std::string out = cfg.Output.empty()
+                      ? std::string(config::kFallbackOutput)
+                      : cfg.Output;
+
+    LOGI("[onLoad-Dump] launching dump thread Target=%s Out=%s", cfg.Target_Game.c_str(), out.c_str());
+
+    installSigsegvHandler();
+
+    if (cfg.Protected_Breaker) {
+        std::lock_guard<std::mutex> lk(s_early_cfg_mutex);
+        s_early_out_dir = out;
+        s_early_cfg     = cfg;
+    }
+
+    if (cfg.Protected_Breaker) {
+        installDlopenHook(out, cfg);
+    }
+
+    config::DumperConfig c = cfg;
+    std::thread([out = std::move(out), c = std::move(c)]() mutable {
+        hackPrepare("", out, c);
+    }).detach();
+}
+
 } // anonymous namespace
 
 class EaquelDumperModule : public rezygisk::ModuleBase {
 public:
 
-    void onLoad(rezygisk::Api* api, JNIEnv* env) override {
-        this->api = api;
-        this->env = env;
+    void onLoad(rezygisk::Api* api_, JNIEnv* env_) override {
+        this->api = api_;
+        this->env = env_;
         LOGI("[Module] onLoad: registered (Zygote safe mode)");
+
+        auto cfg = config::loadConfig();
+        {
+            std::lock_guard<std::mutex> lk(cfg_mutex_);
+            active_cfg = cfg;
+        }
+
+        if (!config::isExplicitTarget(cfg) && !config::isWildcardTarget(cfg)) {
+            LOGW("[onLoad] No valid target configured -- waiting for preAppSpecialize");
+            return;
+        }
+
+        LOGI("[onLoad] Config valid Target=%s -- launching zygote-based dump immediately", cfg.Target_Game.c_str());
+        launchOnLoadDump(cfg);
     }
 
     void preAppSpecialize(rezygisk::AppSpecializeArgs* args) override {
@@ -1136,10 +1179,14 @@ public:
             return;
         }
 
-        active_cfg = config::loadConfig();
+        config::DumperConfig fresh_cfg = config::loadConfig();
+        {
+            std::lock_guard<std::mutex> lk(cfg_mutex_);
+            active_cfg = fresh_cfg;
+        }
 
-        if (config::isExplicitTarget(active_cfg)) {
-            if (active_cfg.Target_Game != pkg_str) {
+        if (config::isExplicitTarget(fresh_cfg)) {
+            if (fresh_cfg.Target_Game != pkg_str) {
                 api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
                 return;
             }
@@ -1147,7 +1194,7 @@ public:
             return;
         }
 
-        if (config::isWildcardTarget(active_cfg)) {
+        if (config::isWildcardTarget(fresh_cfg)) {
             if (!process_filter::isThirdPartyApp(pkg_str) && !isInstalledAsUserApp(pkg_str)) {
                 api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
                 return;
@@ -1163,12 +1210,12 @@ public:
         if (!enable_hack) return;
 
         if (isZygoteProcess()) {
-            LOGE("[BootGuard] postAppSpecialize from Zygote — cancelled");
+            LOGE("[BootGuard] postAppSpecialize from Zygote -- cancelled");
             return;
         }
 
         if (!isApiLevelSupported()) {
-            LOGE("[ApiGuard] unsupported API level — cancelled");
+            LOGE("[ApiGuard] unsupported API level -- cancelled");
             return;
         }
 
@@ -1294,7 +1341,7 @@ private:
         }
 
         if (!is_target) {
-            LOGI("Not target package — closing module");
+            LOGI("Not target package -- closing module");
             api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
             return;
         }
@@ -1319,16 +1366,16 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     if (!vm) return JNI_ERR;
 
     if (isZygoteProcess()) {
-        LOGI("[BootGuard] JNI_OnLoad: Zygote process — safe return");
+        LOGI("[BootGuard] JNI_OnLoad: Zygote process -- safe return");
         return JNI_VERSION_1_6;
     }
 
     if (!isApiLevelSupported()) {
-        LOGI("[ApiGuard] JNI_OnLoad: unsupported API — safe return");
+        LOGI("[ApiGuard] JNI_OnLoad: unsupported API -- safe return");
         return JNI_VERSION_1_6;
     }
 
-    LOGI("[JNI_OnLoad] target process — starting hack");
+    LOGI("[JNI_OnLoad] target process -- starting hack");
     installSigsegvHandler();
 
     config::DumperConfig cfg = config::loadConfig();

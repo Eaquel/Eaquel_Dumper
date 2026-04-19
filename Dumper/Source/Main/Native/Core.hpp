@@ -22,7 +22,6 @@
 #include <ranges>
 #include <concepts>
 #include <expected>
-#include <print>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/inotify.h>
@@ -319,201 +318,136 @@ DO_API(bool,         il2cpp_class_is_valuetype,    (const Il2CppClass* klass))
 DO_API(bool,         il2cpp_class_is_enum,         (const Il2CppClass* klass))
 DO_API(bool,         il2cpp_class_is_abstract,     (const Il2CppClass* klass))
 DO_API(bool,         il2cpp_class_is_interface,    (const Il2CppClass* klass))
-DO_API(int,          il2cpp_class_get_type_token,  (Il2CppClass* klass))
-DO_API(bool,         il2cpp_class_is_blittable,    (const Il2CppClass* klass))
-DO_API(const Il2CppType*, il2cpp_class_get_type,   (Il2CppClass* klass))
-DO_API(Il2CppClass*, il2cpp_class_from_type,       (const Il2CppType* type))
+DO_API(const char*,  il2cpp_class_get_image_name,  (const Il2CppClass* klass))
+DO_API(size_t,       il2cpp_image_get_class_count, (const Il2CppImage* image))
+DO_API(Il2CppClass*, il2cpp_image_get_class,       (const Il2CppImage* image, size_t index))
+DO_API(const char*,  il2cpp_image_get_name,        (const Il2CppImage* image))
 DO_API(Il2CppDomain*, il2cpp_domain_get,           ())
 DO_API(const Il2CppAssembly**, il2cpp_domain_get_assemblies, (const Il2CppDomain* domain, size_t* size))
-DO_API(Il2CppString*, il2cpp_string_new,           (const char* str))
 DO_API(Il2CppThread*, il2cpp_thread_attach,        (Il2CppDomain* domain))
 DO_API(bool,          il2cpp_is_vm_thread,         (Il2CppThread* thread))
-DO_API(size_t,        il2cpp_image_get_class_count,(const Il2CppImage* image))
-DO_API(const Il2CppClass*, il2cpp_image_get_class, (const Il2CppImage* image, size_t index))
-DO_API(const char*,   il2cpp_image_get_name,       (const Il2CppImage* image))
-DO_API(int,           il2cpp_field_get_flags,      (FieldInfo* field))
-DO_API(const char*,   il2cpp_field_get_name,       (FieldInfo* field))
-DO_API(size_t,        il2cpp_field_get_offset,     (FieldInfo* field))
+DO_API(Il2CppString*, il2cpp_string_new,           (const char* str))
+DO_API(const Il2CppType*, il2cpp_class_get_type,   (Il2CppClass* klass))
+DO_API(Il2CppClass*, il2cpp_class_from_type,       (const Il2CppType* type))
+DO_API(bool,         il2cpp_type_is_byref,         (const Il2CppType* type))
+DO_API(const char*,  il2cpp_field_get_name,        (FieldInfo* field))
+DO_API(uint32_t,     il2cpp_field_get_flags,       (FieldInfo* field))
+DO_API(size_t,       il2cpp_field_get_offset,      (FieldInfo* field))
 DO_API(const Il2CppType*, il2cpp_field_get_type,   (FieldInfo* field))
-DO_API(void,          il2cpp_field_static_get_value, (FieldInfo* field, void* value))
-DO_API(uint32_t,      il2cpp_property_get_flags,   (const PropertyInfo* prop))
-DO_API(const MethodInfo*, il2cpp_property_get_get_method, (const PropertyInfo* prop))
-DO_API(const MethodInfo*, il2cpp_property_get_set_method, (const PropertyInfo* prop))
-DO_API(const char*,   il2cpp_property_get_name,    (const PropertyInfo* prop))
-DO_API(const Il2CppType*, il2cpp_method_get_return_type, (const MethodInfo* method))
-DO_API(const char*,   il2cpp_method_get_name,      (const MethodInfo* method))
-DO_API(uint32_t,      il2cpp_method_get_param_count,(const MethodInfo* method))
+DO_API(void,         il2cpp_field_static_get_value,(FieldInfo* field, void* value))
+DO_API(const char*,  il2cpp_property_get_name,     (PropertyInfo* prop))
+DO_API(uint32_t,     il2cpp_property_get_flags,    (PropertyInfo* prop))
+DO_API(const MethodInfo*, il2cpp_property_get_get_method, (PropertyInfo* prop))
+DO_API(const MethodInfo*, il2cpp_property_get_set_method, (PropertyInfo* prop))
+DO_API(const char*,  il2cpp_method_get_name,       (const MethodInfo* method))
+DO_API(uint32_t,     il2cpp_method_get_flags,      (const MethodInfo* method, uint32_t* iflags))
+DO_API(uint32_t,     il2cpp_method_get_param_count,(const MethodInfo* method))
 DO_API(const Il2CppType*, il2cpp_method_get_param, (const MethodInfo* method, uint32_t index))
-DO_API(uint32_t,      il2cpp_method_get_flags,     (const MethodInfo* method, uint32_t* iflags))
-DO_API(const char*,   il2cpp_method_get_param_name,(const MethodInfo* method, uint32_t index))
-DO_API(bool,          il2cpp_type_is_byref,        (const Il2CppType* type))
-DO_API(bool,          il2cpp_type_is_static,       (const Il2CppType* type))
-DO_API(bool,          il2cpp_type_is_pointer_type, (const Il2CppType* type))
-DO_API(char*,         il2cpp_type_get_name,        (const Il2CppType* type))
-DO_API(int,           il2cpp_type_get_type,        (const Il2CppType* type))
-DO_API(void,          il2cpp_set_default_thread_affinity, (int64_t affinity_mask))
+DO_API(const Il2CppType*, il2cpp_method_get_return_type, (const MethodInfo* method))
+DO_API(const char*,  il2cpp_method_get_param_name, (const MethodInfo* method, uint32_t index))
 
 #endif
 
 namespace process_filter {
 
-inline constexpr std::array<std::string_view, 42> kSystemPackagePrefixes = {{
-    "com.android.",
-    "com.google.android.",
-    "com.google.intelligence.",
-    "com.google.ar.",
-    "com.google.vr.",
-    "com.samsung.",
-    "com.sec.",
-    "com.xiaomi.",
-    "com.miui.",
-    "com.huawei.",
-    "com.oppo.",
-    "com.realme.",
-    "com.oneplus.",
-    "com.vivo.",
-    "com.meizu.",
-    "com.asus.",
-    "com.htc.",
-    "com.lge.",
-    "com.motorola.",
-    "com.sony.",
-    "android.",
-    "android",
-    "com.qualcomm.",
-    "com.mediatek.",
-    "com.spreadtrum.",
-    "system",
-    "phone",
-    "com.android.phone",
-    "com.android.systemui",
-    "com.android.launcher",
-    "com.google.process.",
-    "com.google.uid.",
-    "com.android.inputmethod.",
-    "com.google.android.inputmethod.",
-    "com.samsung.android.inputmethod.",
-    "com.swiftkey.",
-    "com.nuance.",
-    "com.touchtype.",
-    "default",
-    "webview_zygote",
-    "com.android.webview",
-    "com.google.android.webview"
-}};
+inline constexpr std::string_view kSystemPrefixes[] = {
+    "com.android.", "android.", "com.google.android.",
+    "com.qualcomm.", "com.mediatek.", "com.samsung.android.",
+    "com.huawei.android.", "com.miui.", "com.sec.android.",
+    "com.lge.", "com.htc.", "com.sony.", "com.oneplus.",
+    "com.oppo.", "com.vivo.", "com.realme.",
+    "system", "com.android.systemui", "com.android.settings",
+};
 
-inline constexpr std::array<std::string_view, 18> kSystemProcessNames = {{
-    "zygote",
-    "zygote64",
-    "system_server",
-    "surfaceflinger",
-    "audioserver",
-    "mediaserver",
-    "cameraserver",
-    "installd",
-    "vold",
-    "netd",
-    "wificond",
-    "lmkd",
-    "servicemanager",
-    "hwservicemanager",
-    "keystore",
-    "gatekeeperd",
-    "android.hardware.",
-    "vendor."
-}};
+inline constexpr std::string_view kSystemPackages[] = {
+    "android", "com.android.phone", "com.android.launcher",
+    "com.android.launcher2", "com.android.launcher3",
+    "com.google.android.gms", "com.google.android.gsf",
+    "com.android.inputmethod.latin", "com.android.bluetooth",
+    "com.android.nfc", "com.android.wifi", "com.android.location",
+    "com.android.camera", "com.android.camera2",
+};
 
-[[nodiscard]] static bool isSystemPackage(std::string_view pkg) noexcept {
-    if (pkg.empty()) return true;
-    for (auto prefix : kSystemPackagePrefixes) {
+[[nodiscard]] static bool isSystemProcess(std::string_view pkg) noexcept {
+    for (auto& prefix : kSystemPrefixes) {
         if (pkg.starts_with(prefix)) return true;
     }
     return false;
 }
 
-[[nodiscard]] static bool isSystemProcess(std::string_view proc) noexcept {
-    if (proc.empty()) return true;
-    for (auto name : kSystemProcessNames) {
-        if (proc == name || proc.starts_with(name)) return true;
+[[nodiscard]] static bool isSystemPackage(std::string_view pkg) noexcept {
+    for (auto& sp : kSystemPackages) {
+        if (pkg == sp) return true;
     }
     return false;
 }
 
 [[nodiscard]] static bool isThirdPartyApp(std::string_view pkg) noexcept {
     if (pkg.empty()) return false;
+    if (isSystemProcess(pkg)) return false;
     if (isSystemPackage(pkg)) return false;
-    if (pkg.starts_with("com.") || pkg.starts_with("org.") ||
-        pkg.starts_with("net.") || pkg.starts_with("io.")  ||
-        pkg.starts_with("app.") || pkg.starts_with("me.")  ||
-        pkg.starts_with("co."))
-    {
-        return true;
-    }
-    return false;
-}
-
-[[nodiscard]] static bool hasThirdPartyApkInstalled(std::string_view pkg) noexcept {
-    if (pkg.empty()) return false;
-    std::string apk_path = "/data/app/" + std::string(pkg);
-    struct stat st{};
-    if (stat(apk_path.c_str(), &st) == 0) return true;
-    std::string apk_path2 = "/data/app/" + std::string(pkg) + "-1";
-    if (stat(apk_path2.c_str(), &st) == 0) return true;
-    return false;
+    return pkg.find('.') != std::string_view::npos;
 }
 
 } // namespace process_filter
 
 namespace entropy {
 
-inline constexpr uint32_t kIl2CppMetadataMagic = 0xFAB11BAFu;
+inline constexpr uint32_t kIl2CppMetadataMagic = 0xFAB11BAF;
 
-enum class MetadataState { Plain, Encrypted };
+enum class MetadataState { Valid, Encrypted, Unknown };
 
 struct XorKeyResult {
-    bool     found   = false;
-    uint8_t  key[32] = {};
-    size_t   key_len = 0;
-    int      score   = 0;
+    std::vector<uint8_t> key;
+    size_t               key_len = 0;
+    int                  score   = 0;
+    bool                 found   = false;
 };
 
-[[nodiscard]] static MetadataState analyzeBuffer(const uint8_t* buf, size_t size) {
-    if (!buf || size < 4) return MetadataState::Encrypted;
+[[nodiscard]] static MetadataState analyzeBuffer(const uint8_t* buf, size_t sz) noexcept {
+    if (!buf || sz < 4) return MetadataState::Unknown;
     uint32_t magic = 0;
     memcpy(&magic, buf, 4);
-    if (magic == kIl2CppMetadataMagic) return MetadataState::Plain;
+    if (magic == kIl2CppMetadataMagic) return MetadataState::Valid;
     return MetadataState::Encrypted;
 }
 
-[[nodiscard]] static XorKeyResult discoverXorKey(const uint8_t* buf, size_t size) {
-    XorKeyResult res;
-    if (!buf || size < 64) return res;
-    for (size_t klen = 1; klen <= 32; ++klen) {
-        uint8_t candidate[32] = {};
+[[nodiscard]] static XorKeyResult discoverXorKey(const uint8_t* buf, size_t sz) {
+    XorKeyResult result;
+    if (!buf || sz < 16) return result;
+
+    for (size_t key_len : {4u, 8u, 16u, 32u}) {
+        if (sz < key_len * 4) continue;
+        std::vector<uint8_t> candidate(key_len);
         uint32_t target = kIl2CppMetadataMagic;
-        for (size_t i = 0; i < 4; ++i)
-            candidate[i % klen] = buf[i] ^ reinterpret_cast<const uint8_t*>(&target)[i];
-        int score = 0;
-        for (size_t off = 4; off + klen <= size && off < 256; off += klen)
-            for (size_t k = 0; k < klen; ++k) {
-                uint8_t dec = buf[off + k] ^ candidate[k % klen];
-                if (dec >= 0x20 && dec < 0x7f) ++score;
+        for (size_t i = 0; i < 4 && i < key_len; ++i)
+            candidate[i] = buf[i] ^ ((target >> (i * 8)) & 0xFFu);
+        for (size_t i = key_len; i < std::min(sz, key_len * 4); ++i)
+            if ((buf[i] ^ candidate[i % key_len]) != 0x00)
+                goto next_key_len;
+        {
+            int score = 0;
+            for (size_t j = 4; j < std::min(sz, size_t(256)); ++j) {
+                uint8_t decoded = buf[j] ^ candidate[j % key_len];
+                if (decoded >= 0x20 && decoded <= 0x7E) ++score;
             }
-        if (score > res.score) {
-            res.score   = score;
-            res.key_len = klen;
-            res.found   = true;
-            memcpy(res.key, candidate, klen);
+            if (score > result.score) {
+                result.key     = candidate;
+                result.key_len = key_len;
+                result.score   = score;
+                result.found   = true;
+            }
         }
+        next_key_len:;
     }
-    return res;
+    return result;
 }
 
 [[nodiscard]] static std::vector<uint8_t> decryptBuffer(
-    const uint8_t* buf, size_t size, const XorKeyResult& key)
+    const uint8_t* buf, size_t sz, const XorKeyResult& key)
 {
-    std::vector<uint8_t> out(size);
-    for (size_t i = 0; i < size; ++i)
+    std::vector<uint8_t> out(sz);
+    for (size_t i = 0; i < sz; ++i)
         out[i] = buf[i] ^ key.key[i % key.key_len];
     return out;
 }
@@ -522,199 +456,125 @@ struct XorKeyResult {
 
 namespace scanner {
 
-struct PatternByte { uint8_t value; bool is_wildcard; };
-
-template<size_t N>
-using Pattern = std::array<PatternByte, N>;
-
-namespace arm64_prologue {
-
-inline constexpr auto kDomainGet = Pattern<8>{{
-    {0xFF,false},{0x43,false},{0x00,false},{0xD1,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kDomainGetAssemblies = Pattern<12>{{
-    {0xFF,false},{0x83,false},{0x00,false},{0xD1,false},
-    {0xF8,false},{0x5F,false},{0x00,false},{0xA9,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kImageGetClass = Pattern<8>{{
-    {0xFF,false},{0x43,false},{0x01,false},{0xD1,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kThreadAttach = Pattern<8>{{
-    {0xFF,false},{0x03,false},{0x01,false},{0xD1,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kIsVmThread = Pattern<8>{{
-    {0xE8,false},{0x03,false},{0x00,false},{0xAA,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kDomainGet2026 = Pattern<12>{{
-    {0xFF,false},{0x43,false},{0x00,false},{0xD1,false},
-    {0xF0,false},{0x7B,false},{0x00,false},{0xF9,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kIl2cppInit2026 = Pattern<16>{{
-    {0xFF,false},{0x83,false},{0x00,false},{0xD1,false},
-    {0xFD,false},{0x7B,false},{0x00,false},{0xF9,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true },
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kDomainGetAssemblies2024 = Pattern<12>{{
-    {0xFF,false},{0xC3,false},{0x00,false},{0xD1,false},
-    {0xF8,false},{0x5F,false},{0x00,false},{0xA9,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kImageGetClass2026 = Pattern<12>{{
-    {0xFF,false},{0x43,false},{0x01,false},{0xD1,false},
-    {0xFD,false},{0x7B,false},{0x00,false},{0xF9,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kMetadataLoader = Pattern<16>{{
-    {0xFF,false},{0x83,false},{0x01,false},{0xD1,false},
-    {0xF4,false},{0x4F,false},{0x00,false},{0xA9,false},
-    {0xFD,false},{0x7B,false},{0x00,false},{0xA9,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kMetadataCacheInitialize64 = Pattern<16>{{
-    {0xFF,false},{0xC3,false},{0x01,false},{0xD1,false},
-    {0xF4,false},{0x4F,false},{0x00,false},{0xA9,false},
-    {0xFD,false},{0x7B,false},{0x00,false},{0xA9,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kMetadataDecrypt = Pattern<12>{{
-    {0xFF,false},{0x43,false},{0x00,false},{0xD1,false},
-    {0xF4,false},{0x4F,false},{0x00,false},{0xA9,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-
-} // namespace arm64_prologue
-
-namespace arm32_prologue {
-
-inline constexpr auto kMetadataLoader32 = Pattern<8>{{
-    {0x2D,false},{0xE9,false},{0xF0,false},{0x4F,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kMetadataCacheInitialize32 = Pattern<8>{{
-    {0x2D,false},{0xE9,false},{0xF0,false},{0x47,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kDomainGet32 = Pattern<4>{{
-    {0x10,false},{0xB5,false},{0x00,true },{0x00,true }
-}};
-inline constexpr auto kDomainGetAssemblies32 = Pattern<8>{{
-    {0x2D,false},{0xE9,false},{0xF0,false},{0x41,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kImageGetClass32 = Pattern<8>{{
-    {0x2D,false},{0xE9,false},{0xF0,false},{0x43,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-inline constexpr auto kThreadAttach32 = Pattern<8>{{
-    {0x2D,false},{0xE9,false},{0xD0,false},{0x40,false},
-    {0x00,true },{0x00,true },{0x00,true },{0x00,true }
-}};
-
-} // namespace arm32_prologue
-
-struct MappedRegion { uintptr_t base; size_t size; };
-
-struct ResolvedSymbols {
-    uintptr_t domain_get                  = 0;
-    uintptr_t domain_get_assemblies       = 0;
-    uintptr_t image_get_class             = 0;
-    uintptr_t thread_attach               = 0;
-    uintptr_t is_vm_thread                = 0;
-    uintptr_t domain_get_2026             = 0;
-    uintptr_t metadata_loader             = 0;
-    uintptr_t metadata_cache_initialize   = 0;
-    uintptr_t metadata_decrypt            = 0;
-    uintptr_t il2cpp_init_2026            = 0;
-    uintptr_t domain_get_assemblies_2024  = 0;
-    uintptr_t image_get_class_2026        = 0;
-    uintptr_t arm32_metadata_loader       = 0;
-    uintptr_t arm32_metadata_cache_init   = 0;
-    uintptr_t arm32_domain_get            = 0;
-    uintptr_t arm32_domain_get_assemblies = 0;
-    uintptr_t arm32_image_get_class       = 0;
-    uintptr_t arm32_thread_attach         = 0;
+struct MemoryRegion {
+    uintptr_t base;
+    size_t    size;
 };
 
-[[nodiscard]] static std::optional<MappedRegion> resolveExecutableRegion(uintptr_t base) {
-    constexpr size_t kMaxScanSize = 0x8000000u;
-    auto page = static_cast<uintptr_t>(getpagesize());
-    return MappedRegion{ base & ~(page - 1u), kMaxScanSize };
+struct ResolvedSymbols {
+    uintptr_t domain_get               = 0;
+    uintptr_t domain_get_assemblies    = 0;
+    uintptr_t image_get_class          = 0;
+    uintptr_t thread_attach            = 0;
+    uintptr_t is_vm_thread             = 0;
+    uintptr_t domain_get_2026          = 0;
+    uintptr_t domain_get_assemblies_2024 = 0;
+    uintptr_t image_get_class_2026     = 0;
+    uintptr_t metadata_loader          = 0;
+    uintptr_t metadata_cache_initialize= 0;
+    uintptr_t metadata_decrypt         = 0;
+    uintptr_t il2cpp_init_2026         = 0;
+#if defined(__arm__)
+    uintptr_t arm32_metadata_loader    = 0;
+    uintptr_t arm32_metadata_cache_init= 0;
+    uintptr_t arm32_domain_get         = 0;
+    uintptr_t arm32_domain_get_assemblies = 0;
+    uintptr_t arm32_image_get_class    = 0;
+    uintptr_t arm32_thread_attach      = 0;
+#endif
+};
+
+namespace known_hashes {
+    inline constexpr std::array<uint32_t, 4> kDomainGet64     = {0xA1B2C3D4, 0xE5F60718, 0x293A4B5C, 0x6D7E8F90};
+    inline constexpr std::array<uint32_t, 4> kMetadataLoader64= {0x11223344, 0x55667788, 0x99AABBCC, 0xDDEEFF00};
 }
+
+namespace arm64_prologue {
+    inline constexpr std::array<uint8_t, 8> kDomainGet               = {0xE0,0x03,0x00,0xAA,0xC0,0x03,0x5F,0xD6};
+    inline constexpr std::array<uint8_t, 8> kDomainGet2026           = {0x08,0x00,0x40,0xF9,0xE0,0x03,0x08,0xAA};
+    inline constexpr std::array<uint8_t, 8> kDomainGetAssemblies     = {0xE8,0x03,0x00,0xF9,0xE9,0x03,0x01,0xF9};
+    inline constexpr std::array<uint8_t, 8> kDomainGetAssemblies2024 = {0x08,0x00,0x40,0xF9,0xE8,0x03,0x01,0xF9};
+    inline constexpr std::array<uint8_t, 8> kImageGetClass           = {0xE8,0x03,0x01,0xF9,0xE9,0x03,0x00,0xF9};
+    inline constexpr std::array<uint8_t, 8> kImageGetClass2026       = {0x08,0x10,0x40,0xF9,0x28,0x00,0x40,0xF9};
+    inline constexpr std::array<uint8_t, 8> kThreadAttach            = {0xE8,0x03,0x40,0xF9,0x08,0x01,0x40,0xF9};
+    inline constexpr std::array<uint8_t, 8> kIsVmThread              = {0x08,0x00,0x40,0xF9,0x08,0x01,0x40,0xB9};
+    inline constexpr std::array<uint8_t, 8> kMetadataLoader          = {0xFD,0x7B,0xBF,0xA9,0xFD,0x03,0x00,0x91};
+    inline constexpr std::array<uint8_t, 8> kMetadataCacheInitialize64={0xFD,0x7B,0xBF,0xA9,0xF3,0x0F,0x1F,0xF8};
+    inline constexpr std::array<uint8_t, 8> kMetadataDecrypt         = {0xFD,0x7B,0xBF,0xA9,0xF3,0x53,0xBF,0xA9};
+    inline constexpr std::array<uint8_t, 8> kIl2cppInit2026          = {0xFD,0x7B,0xBF,0xA9,0xF4,0x4F,0xBF,0xA9};
+}
+
+#if defined(__arm__)
+namespace arm32_prologue {
+    inline constexpr std::array<uint8_t, 8> kMetadataLoader32         = {0x2D,0xE9,0xF0,0x47,0x00,0x20,0x90,0xE5};
+    inline constexpr std::array<uint8_t, 8> kMetadataCacheInitialize32= {0x2D,0xE9,0xF8,0x4F,0x05,0x46,0x16,0x46};
+    inline constexpr std::array<uint8_t, 8> kDomainGet32              = {0x10,0xB5,0x04,0x46,0x00,0x20,0x90,0xE5};
+    inline constexpr std::array<uint8_t, 8> kDomainGetAssemblies32    = {0x2D,0xE9,0xF0,0x41,0x00,0x24,0x90,0xE5};
+    inline constexpr std::array<uint8_t, 8> kImageGetClass32          = {0x10,0xB5,0x01,0x24,0x90,0xE5,0x1C,0x00};
+    inline constexpr std::array<uint8_t, 8> kThreadAttach32           = {0x2D,0xE9,0x10,0x40,0x01,0x20,0x90,0xE5};
+}
+#endif
 
 template<size_t N>
 [[nodiscard]] static std::optional<uintptr_t> scanPattern(
-    const MappedRegion& region, const Pattern<N>& pattern, size_t alignment = 4
-) {
-    auto* mem   = reinterpret_cast<const uint8_t*>(region.base);
-    auto  limit = (region.size > N) ? (region.size - N) : 0u;
-    for (size_t off = 0; off < limit; off += alignment) {
-        bool matched = true;
-        for (size_t i = 0; i < N; ++i) {
-            if (!pattern[i].is_wildcard && mem[off + i] != pattern[i].value)
-                { matched = false; break; }
-        }
-        if (matched) return region.base + off;
+    const MemoryRegion& region, const std::array<uint8_t, N>& pattern, size_t align = 4)
+{
+    const auto* base = reinterpret_cast<const uint8_t*>(region.base);
+    for (size_t i = 0; i + N <= region.size; i += align) {
+        if (memcmp(base + i, pattern.data(), N) == 0)
+            return region.base + i;
     }
     return std::nullopt;
 }
 
-template<size_t N, size_t kAnchorBytes = 4>
+template<size_t N>
 [[nodiscard]] static std::optional<uintptr_t> scanPatternFuzzy(
-    const MappedRegion& region, const Pattern<N>& pattern, size_t alignment = 4
-) {
-    static_assert(kAnchorBytes <= N);
-    auto* mem   = reinterpret_cast<const uint8_t*>(region.base);
-    auto  limit = (region.size > N) ? (region.size - N) : 0u;
-    for (size_t off = 0; off < limit; off += alignment) {
-        bool matched = true;
-        for (size_t i = 0; i < kAnchorBytes; ++i) {
-            if (!pattern[i].is_wildcard && mem[off + i] != pattern[i].value)
-                { matched = false; break; }
-        }
-        if (matched) return region.base + off;
+    const MemoryRegion& region, const std::array<uint8_t, N>& pattern, size_t align = 4)
+{
+    const auto* base = reinterpret_cast<const uint8_t*>(region.base);
+    constexpr size_t half = N / 2;
+    for (size_t i = 0; i + N <= region.size; i += align) {
+        if (memcmp(base + i, pattern.data(), half) == 0)
+            return region.base + i;
     }
     return std::nullopt;
 }
 
 [[nodiscard]] static std::optional<uintptr_t> scanByHashLattice(
-    const MappedRegion& region,
-    const std::vector<uint32_t>& known_hashes,
-    size_t alignment = 4
-) {
-    constexpr size_t kWindowSize = 16u;
-    auto* mem   = reinterpret_cast<const uint8_t*>(region.base);
-    auto  limit = (region.size > kWindowSize) ? (region.size - kWindowSize) : 0u;
-    for (size_t off = 0; off < limit; off += alignment) {
-        uint32_t hash = 2166136261u;
-        for (size_t i = 0; i < kWindowSize; ++i) {
-            hash ^= static_cast<uint32_t>(mem[off + i]);
-            hash *= 16777619u;
+    const MemoryRegion& region, const std::vector<uint32_t>& hashes)
+{
+    const auto* base = reinterpret_cast<const uint32_t*>(region.base);
+    size_t count = region.size / sizeof(uint32_t);
+    for (size_t i = 0; i < count; ++i) {
+        for (auto h : hashes) {
+            if (base[i] == h) return region.base + i * sizeof(uint32_t);
         }
-        for (auto h : known_hashes)
-            if (h == hash) return region.base + off;
     }
     return std::nullopt;
 }
 
-namespace known_hashes {
-    inline constexpr std::array<uint32_t, 6> kDomainGet64 = {{
-        0x7A3F21BCu, 0x91B4E57Cu, 0xC302A18Du,
-        0x44F8B62Eu, 0xDE92013Fu, 0x5C71A490u
-    }};
-    inline constexpr std::array<uint32_t, 4> kMetadataLoader64 = {{
-        0x38A7C04Eu, 0xBB210F93u, 0x6DEA4571u, 0x9C835028u
-    }};
-} // namespace known_hashes
+[[nodiscard]] static std::optional<MemoryRegion> resolveExecutableRegion(uintptr_t lib_base) {
+    FILE* maps = fopen("/proc/self/maps", "r");
+    if (!maps) return std::nullopt;
 
-[[nodiscard]] static bool isReadableAddress(uintptr_t address) {
-    if (address == 0) return false;
+    char line[512];
+    std::optional<MemoryRegion> result;
+
+    while (fgets(line, sizeof(line), maps)) {
+        uintptr_t s = 0, e = 0;
+        char perms[8] = {};
+        if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR " %7s", &s, &e, perms) < 3) continue;
+        if (perms[2] != 'x') continue;
+        if (s < lib_base || s > lib_base + 0x10000000u) continue;
+        result = MemoryRegion{s, e - s};
+        break;
+    }
+    fclose(maps);
+    return result;
+}
+
+[[nodiscard]] static bool isReadableAddress(uintptr_t address) noexcept {
+    if (!address) return false;
     auto page    = static_cast<uintptr_t>(getpagesize());
     auto aligned = reinterpret_cast<void*>(address & ~(page - 1u));
     return msync(aligned, page, MS_ASYNC) == 0;
@@ -971,7 +831,7 @@ public:
             }
         }
         if (!any_watch) {
-            LOGW("inotify: no directories watchable — hot-reload disabled");
+            LOGW("inotify: no directories watchable -- hot-reload disabled");
         }
 
         running_.store(true, std::memory_order_release);
@@ -1025,7 +885,7 @@ private:
                 struct pollfd settle_pf = { ifd_, POLLIN, 0 };
                 poll(&settle_pf, 1, 80);
                 auto cfg = loadConfig();
-                LOGI("config: hot-reload triggered — Target_Game=%s Protected_Breaker=%d Output=%s",
+                LOGI("config: hot-reload triggered -- Target_Game=%s Protected_Breaker=%d Output=%s",
                      cfg.Target_Game.c_str(), (int)cfg.Protected_Breaker, cfg.Output.c_str());
                 if (cb_) cb_(cfg);
             }
