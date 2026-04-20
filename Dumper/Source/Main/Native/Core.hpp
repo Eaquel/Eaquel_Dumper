@@ -18,11 +18,8 @@
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <algorithm>
 #include <span>
-#include <ranges>
-#include <concepts>
-#include <expected>
-#include <format>
 #include <map>
 #include <set>
 #include <sys/mman.h>
@@ -375,15 +372,13 @@ inline constexpr std::string_view kSystemPackages[] = {
 };
 
 [[nodiscard]] static bool isSystemProcess(std::string_view pkg) noexcept {
-    return std::ranges::any_of(kSystemPrefixes, [&](std::string_view p) {
-        return pkg.starts_with(p);
-    });
+    return std::any_of(std::begin(kSystemPrefixes), std::end(kSystemPrefixes),
+                       [&](std::string_view p) { return pkg.starts_with(p); });
 }
 
 [[nodiscard]] static bool isSystemPackage(std::string_view pkg) noexcept {
-    return std::ranges::any_of(kSystemPackages, [&](std::string_view sp) {
-        return pkg == sp;
-    });
+    return std::any_of(std::begin(kSystemPackages), std::end(kSystemPackages),
+                       [&](std::string_view sp) { return pkg == sp; });
 }
 
 [[nodiscard]] static bool isThirdPartyApp(std::string_view pkg) noexcept {

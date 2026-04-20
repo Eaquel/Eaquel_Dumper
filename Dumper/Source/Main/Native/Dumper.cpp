@@ -31,10 +31,7 @@
 #include <poll.h>
 #include <dirent.h>
 #include <span>
-#include <ranges>
-#include <concepts>
-#include <expected>
-#include <format>
+#include <algorithm>
 
 [[nodiscard]] static const char* safeStr(const char* s, const char* fallback = "") noexcept {
     return (s && *s) ? s : fallback;
