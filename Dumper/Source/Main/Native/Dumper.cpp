@@ -23,7 +23,6 @@
 #include <sys/stat.h>
 #include <sys/system_properties.h>
 #include <sys/eventfd.h>
-#include <linux/unistd.h>
 #include <unistd.h>
 #include <array>
 #include <signal.h>
@@ -48,40 +47,35 @@ static std::string          s_early_out_dir;
 static config::DumperConfig s_early_cfg;
 static std::atomic<bool>    s_early_hook_fired{false};
 static std::mutex           s_early_cfg_mutex;
-static std::atomic<bool>    s_onload_dump_started{false};
 
 [[nodiscard]] static bool isZygoteProcess() noexcept {
     char cmdline[256] = {};
-    int fd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
+    const int fd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
     if (fd < 0) return true;
-    ssize_t n = read(fd, cmdline, sizeof(cmdline) - 1);
+    const ssize_t n = read(fd, cmdline, sizeof(cmdline) - 1);
     close(fd);
     if (n <= 0) return true;
-    std::string_view sv(cmdline, static_cast<size_t>(n));
-    bool is_zygote = sv.starts_with("zygote");
-    if (is_zygote) LOGW("[BootGuard] Zygote detected cmdline='%s'", cmdline);
+    const std::string_view sv(cmdline, static_cast<size_t>(n));
+    const bool is_zygote = sv.starts_with("zygote");
+    if (is_zygote) LOGW("[BootGuard] Zygote process detected cmdline='%s'", cmdline);
     return is_zygote;
 }
 
 [[nodiscard]] static int getAndroidApiLevel() noexcept {
     char prop[PROP_VALUE_MAX] = {};
     __system_property_get("ro.build.version.sdk", prop);
-    int api = atoi(prop);
+    const int api = atoi(prop);
     return (api > 0) ? api : 30;
 }
 
 [[nodiscard]] static bool isApiLevelSupported() noexcept {
-    int api = getAndroidApiLevel();
+    const int api = getAndroidApiLevel();
     return api >= config::kAndroidMinApi && api <= config::kAndroidMaxApi;
-}
-
-[[nodiscard]] static bool isSystemUid(uid_t uid) noexcept {
-    return uid < 10000u;
 }
 
 [[nodiscard]] static bool isInstalledAsUserApp(std::string_view pkg) noexcept {
     if (pkg.empty()) return false;
-    std::string path = std::string("/data/data/").append(pkg);
+    const std::string path = std::string("/data/data/").append(pkg);
     struct stat st{};
     if (stat(path.c_str(), &st) != 0) return false;
     return st.st_uid >= 10000u;
@@ -109,15 +103,14 @@ static constexpr size_t kPageSize = 4096u;
 static bool stealthPatchWindow(uintptr_t addr, size_t len,
                                const std::function<void()>& patch_fn)
 {
-    void*  page     = reinterpret_cast<void*>(alignDown(addr));
-    size_t page_len = alignUp(len + (addr - alignDown(addr)));
+    void* const  page     = reinterpret_cast<void*>(alignDown(addr));
+    const size_t page_len = alignUp(len + (addr - alignDown(addr)));
 
     if (mprotect(page, page_len, PROT_READ | PROT_WRITE) != 0) {
         LOGE("hook: mprotect RW failed addr=0x%" PRIxPTR " errno=%d", addr, errno);
         return false;
     }
     patch_fn();
-
     if (mprotect(page, page_len, PROT_READ | PROT_EXEC) != 0) {
         LOGE("hook: mprotect RX failed addr=0x%" PRIxPTR " errno=%d", addr, errno);
         return false;
@@ -131,8 +124,8 @@ static void flushCache(uintptr_t addr, size_t len) noexcept {
 }
 
 static void* allocTrampolinePage(uintptr_t near_addr) noexcept {
-    uintptr_t lo = (near_addr > 0x8000000u) ? (near_addr - 0x8000000u) : 0u;
-    uintptr_t hi = near_addr + 0x8000000u;
+    const uintptr_t lo = (near_addr > 0x8000000u) ? (near_addr - 0x8000000u) : 0u;
+    const uintptr_t hi = near_addr + 0x8000000u;
 
     FILE* f = fopen("/proc/self/maps", "r");
     if (!f) return nullptr;
@@ -146,7 +139,7 @@ static void* allocTrampolinePage(uintptr_t near_addr) noexcept {
         if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &s, &e) != 2) continue;
         if (s > hi) break;
         if (s > prev_end && (s - prev_end) >= kPageSize) {
-            uintptr_t try_addr = (prev_end + kPageSize - 1u) & ~(kPageSize - 1u);
+            const uintptr_t try_addr = (prev_end + kPageSize - 1u) & ~(kPageSize - 1u);
             if (try_addr + kPageSize <= s) {
                 void* p = mmap(reinterpret_cast<void*>(try_addr), kPageSize,
                                PROT_READ | PROT_WRITE,
@@ -182,16 +175,16 @@ struct Trampoline {
 };
 
 [[nodiscard]] bool installInlineHook(void* target, void* hook, void** orig_out) {
-    auto tgt = reinterpret_cast<uintptr_t>(target);
+    const auto tgt = reinterpret_cast<uintptr_t>(target);
     if (!scanner::isReadableAddress(tgt)) return false;
 
     auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
     if (!tramp_page) { LOGE("hook[arm64]: trampoline alloc failed"); return false; }
 
-    auto* tramp       = reinterpret_cast<Trampoline*>(tramp_page);
+    auto* tramp        = reinterpret_cast<Trampoline*>(tramp_page);
     __builtin_memcpy(tramp->saved, reinterpret_cast<void*>(tgt), kHookSize);
-    tramp->ldr_x17    = 0x58000051u;
-    tramp->br_x17     = 0xD61F0220u;
+    tramp->ldr_x17     = 0x58000051u;
+    tramp->br_x17      = 0xD61F0220u;
     tramp->return_addr = static_cast<uint64_t>(tgt + kHookSize);
     flushCache(reinterpret_cast<uintptr_t>(tramp), sizeof(Trampoline));
 
@@ -199,13 +192,13 @@ struct Trampoline {
         LOGE("hook[arm64]: trampoline lock RX failed"); return false;
     }
 
-    bool ok = stealthPatchWindow(tgt, kHookSize, [&]() {
-        auto*    dst      = reinterpret_cast<uint8_t*>(tgt);
-        uint32_t ldr      = 0x58000051u;
-        uint32_t br       = 0xD61F0220u;
+    const bool ok = stealthPatchWindow(tgt, kHookSize, [&]() {
+        auto* const dst       = reinterpret_cast<uint8_t*>(tgt);
+        const uint32_t ldr    = 0x58000051u;
+        const uint32_t br     = 0xD61F0220u;
         __builtin_memcpy(dst,     &ldr, 4);
         __builtin_memcpy(dst + 4, &br,  4);
-        uint64_t hook_addr = reinterpret_cast<uint64_t>(hook);
+        const uint64_t hook_addr = reinterpret_cast<uint64_t>(hook);
         __builtin_memcpy(dst + 8, &hook_addr, 8);
         flushCache(tgt, kHookSize);
     });
@@ -220,8 +213,8 @@ struct Trampoline {
 static constexpr size_t kHookSize = 8u;
 
 [[nodiscard]] bool installInlineHook(void* target, void* hook, void** orig_out) {
-    auto tgt_thumb = reinterpret_cast<uintptr_t>(target);
-    auto tgt       = tgt_thumb & ~1u;
+    const auto tgt_thumb = reinterpret_cast<uintptr_t>(target);
+    const auto tgt       = tgt_thumb & ~1u;
     if (!scanner::isReadableAddress(tgt)) return false;
 
     auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
@@ -230,18 +223,18 @@ static constexpr size_t kHookSize = 8u;
     __builtin_memcpy(tramp_page, reinterpret_cast<void*>(tgt), kHookSize);
     const uint8_t jback[] = { 0xDF, 0xF8, 0x00, 0xF0 };
     __builtin_memcpy(tramp_page + kHookSize, jback, 4);
-    uint32_t ret_addr = static_cast<uint32_t>(tgt + kHookSize) | 1u;
+    const uint32_t ret_addr = static_cast<uint32_t>(tgt + kHookSize) | 1u;
     __builtin_memcpy(tramp_page + kHookSize + 4, &ret_addr, 4);
-    flushCache(reinterpret_cast<uintptr_t>(tramp_page), kHookSize + 8);
+    flushCache(reinterpret_cast<uintptr_t>(tramp_page), kHookSize + 8u);
 
     if (!lockTrampolineRX(tramp_page)) {
         LOGE("hook[arm32]: trampoline lock RX failed"); return false;
     }
 
-    bool ok = stealthPatchWindow(tgt, kHookSize, [&]() {
+    const bool ok = stealthPatchWindow(tgt, kHookSize, [&]() {
         const uint8_t ldr_pc[] = { 0xDF, 0xF8, 0x00, 0xF0 };
         __builtin_memcpy(reinterpret_cast<void*>(tgt), ldr_pc, 4);
-        uint32_t hook_addr = reinterpret_cast<uint32_t>(hook) | 1u;
+        const uint32_t hook_addr = reinterpret_cast<uint32_t>(hook) | 1u;
         __builtin_memcpy(reinterpret_cast<void*>(tgt + 4), &hook_addr, 4);
         flushCache(tgt, kHookSize);
     });
@@ -257,7 +250,7 @@ static constexpr size_t kHookSize = 8u;
 static constexpr size_t kHookSize = 14u;
 
 [[nodiscard]] bool installInlineHook(void* target, void* hook, void** orig_out) {
-    auto tgt = reinterpret_cast<uintptr_t>(target);
+    const auto tgt = reinterpret_cast<uintptr_t>(target);
     if (!scanner::isReadableAddress(tgt)) return false;
 
     auto* tramp_page = static_cast<uint8_t*>(allocTrampolinePage(tgt));
@@ -270,17 +263,17 @@ static constexpr size_t kHookSize = 14u;
         LOGE("hook[x86]: trampoline lock RX failed"); return false;
     }
 
-    bool ok = stealthPatchWindow(tgt, kHookSize, [&]() {
-        auto* dst = reinterpret_cast<uint8_t*>(tgt);
+    const bool ok = stealthPatchWindow(tgt, kHookSize, [&]() {
+        auto* const dst = reinterpret_cast<uint8_t*>(tgt);
 #if defined(__x86_64__)
         dst[0] = 0xFF; dst[1] = 0x25;
-        uint32_t rel = 0;
+        const uint32_t rel = 0u;
         __builtin_memcpy(dst + 2, &rel, 4);
-        uint64_t hook_addr = reinterpret_cast<uint64_t>(hook);
+        const uint64_t hook_addr = reinterpret_cast<uint64_t>(hook);
         __builtin_memcpy(dst + 6, &hook_addr, 8);
 #else
         dst[0] = 0xE9;
-        uint32_t rel = static_cast<uint32_t>(
+        const uint32_t rel = static_cast<uint32_t>(
             reinterpret_cast<uintptr_t>(hook) - tgt - 5u);
         __builtin_memcpy(dst + 1, &rel, 4);
 #endif
@@ -302,7 +295,7 @@ static constexpr size_t kHookSize = 14u;
     if (!dladdr(reinterpret_cast<void*>(&patchGotSlot), &di) || !di.dli_fbase) {
         LOGE("GOT patch: dladdr failed"); return false;
     }
-    auto self_base = reinterpret_cast<uintptr_t>(di.dli_fbase);
+    const auto self_base = reinterpret_cast<uintptr_t>(di.dli_fbase);
 
     FILE* maps = fopen("/proc/self/maps", "r");
     if (!maps) return false;
@@ -318,7 +311,7 @@ static constexpr size_t kHookSize = 14u;
         for (uintptr_t addr = seg_s; addr + sizeof(void*) <= seg_e; addr += sizeof(void*)) {
             void** slot = reinterpret_cast<void**>(addr);
             if (*slot != target_fn) continue;
-            uintptr_t page = alignDown(addr);
+            const uintptr_t page = alignDown(addr);
             if (mprotect(reinterpret_cast<void*>(page), kPageSize, PROT_READ | PROT_WRITE) != 0)
                 continue;
             if (orig_out) *orig_out = *slot;
@@ -336,7 +329,7 @@ static constexpr size_t kHookSize = 14u;
 
 } // namespace hook_engine
 
-static void installSigsegvHandler() {
+static void installSigsegvHandler() noexcept {
     struct sigaction sa{};
     sa.sa_sigaction = scanner::sigsegv_handler;
     sa.sa_flags     = SA_SIGINFO | SA_RESETHAND;
@@ -354,15 +347,15 @@ static std::string       s_dump_dir;
 static std::mutex        s_mutex;
 
 static void persistDecryptedMetadata(const void* data, size_t size, const char* src_path) {
-    if (!data || size < 4) return;
+    if (!data || size < 4u) return;
 
-    auto* buf   = reinterpret_cast<const uint8_t*>(data);
-    auto  state = entropy::analyzeBuffer(buf, size);
+    const auto* buf   = reinterpret_cast<const uint8_t*>(data);
+    const auto  state = entropy::analyzeBuffer(buf, size);
     std::vector<uint8_t> plaintext;
 
     if (state == entropy::MetadataState::Encrypted) {
         LOGI("[MetaHook] Buffer encrypted -- XOR key scan starting");
-        auto key = entropy::discoverXorKey(buf, size);
+        const auto key = entropy::discoverXorKey(buf, size);
         if (key.found && key.score >= 2) {
             plaintext = entropy::decryptBuffer(buf, size, key);
             LOGI("[MetaHook] Decrypt done key_len=%zu score=%d", key.key_len, key.score);
@@ -375,7 +368,7 @@ static void persistDecryptedMetadata(const void* data, size_t size, const char* 
     }
 
     uint32_t out_magic = 0;
-    if (plaintext.size() >= 4) __builtin_memcpy(&out_magic, plaintext.data(), 4);
+    if (plaintext.size() >= 4u) __builtin_memcpy(&out_magic, plaintext.data(), 4);
     if (out_magic != entropy::kIl2CppMetadataMagic)
         LOGW("[MetaHook] Output magic 0x%08X -- may still be encrypted", out_magic);
 
@@ -383,20 +376,22 @@ static void persistDecryptedMetadata(const void* data, size_t size, const char* 
     struct stat st{};
     if (stat(s_dump_dir.c_str(), &st) != 0) mkdir(s_dump_dir.c_str(), 0777);
 
-    std::string out_path = s_dump_dir + "/global-metadata.dat";
-    int fd = open(out_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    const std::string out_path = s_dump_dir + "/global-metadata.dat";
+    const int fd = open(out_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) {
         LOGE("[MetaHook] open(%s) failed errno=%d", out_path.c_str(), errno);
         return;
     }
+
     const uint8_t* ptr  = plaintext.data();
     size_t         left = plaintext.size();
     while (left > 0) {
-        ssize_t w = write(fd, ptr, left);
+        const ssize_t w = write(fd, ptr, left);
         if (w <= 0) break;
         ptr  += static_cast<size_t>(w);
         left -= static_cast<size_t>(w);
     }
+    fdatasync(fd);
     close(fd);
     LOGI("[MetaHook] metadata written (%zu bytes) %s -> %s",
          plaintext.size(), src_path ? src_path : "?", out_path.c_str());
@@ -421,8 +416,8 @@ static bool install(uintptr_t lib_base, const std::string& dump_dir) {
         std::lock_guard<std::mutex> lk(s_mutex);
         s_dump_dir = dump_dir;
     }
-    auto      syms        = scanner::scanAllSymbols(lib_base);
-    uintptr_t loader_addr = 0;
+    const auto syms        = scanner::scanAllSymbols(lib_base);
+    uintptr_t  loader_addr = 0;
 
 #if defined(__aarch64__)
     loader_addr = syms.metadata_cache_initialize
@@ -440,7 +435,7 @@ static bool install(uintptr_t lib_base, const std::string& dump_dir) {
 
     if (!loader_addr) { LOGW("[MetaHook] loader address not found"); return false; }
 
-    bool ok = hook_engine::installInlineHook(
+    const bool ok = hook_engine::installInlineHook(
         reinterpret_cast<void*>(loader_addr),
         reinterpret_cast<void*>(&hooked_MetadataLoad),
         reinterpret_cast<void**>(&s_orig_load)
@@ -478,7 +473,7 @@ static void* hooked_dlopen(const char* path, int flags) {
             }
 
             std::thread([out = std::move(out), cfg = std::move(cfg), handle]() mutable {
-                int efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+                int efd = eventfd(0u, EFD_CLOEXEC | EFD_NONBLOCK);
                 if (efd >= 0) {
                     struct pollfd pf = { efd, POLLIN, 0 };
                     poll(&pf, 1, 30);
@@ -512,7 +507,7 @@ static bool installDlopenHook(const std::string& out_dir,
         s_early_out_dir = out_dir;
         s_early_cfg     = cfg;
     }
-    s_early_hook_fired.store(false);
+    s_early_hook_fired.store(false, std::memory_order_release);
 
     if (hook_engine::installInlineHook(
             reinterpret_cast<void*>(dlopen),
@@ -533,60 +528,60 @@ static bool installDlopenHook(const std::string& out_dir,
         return true;
     }
 
-    LOGW("dlopen hook failed -- polling mode");
+    LOGW("dlopen hook failed -- polling fallback mode");
     return false;
 }
 
 namespace il2cpp_api {
 
 struct FunctionTable {
-    bool           (*init)(const char*, int)                                             = nullptr;
-    Il2CppDomain*  (*domain_get)()                                                       = nullptr;
-    const Il2CppAssembly** (*domain_get_assemblies)(const Il2CppDomain*, size_t*)        = nullptr;
-    const Il2CppImage* (*assembly_get_image)(const Il2CppAssembly*)                      = nullptr;
-    const char*    (*image_get_name)(const Il2CppImage*)                                 = nullptr;
-    size_t         (*image_get_class_count)(const Il2CppImage*)                          = nullptr;
-    Il2CppClass*   (*image_get_class)(const Il2CppImage*, size_t)                        = nullptr;
-    const Il2CppType* (*class_get_type)(Il2CppClass*)                                    = nullptr;
-    Il2CppClass*   (*class_from_type)(const Il2CppType*)                                 = nullptr;
-    const char*    (*class_get_name)(Il2CppClass*)                                       = nullptr;
-    const char*    (*class_get_namespace)(Il2CppClass*)                                  = nullptr;
-    uint32_t       (*class_get_flags)(Il2CppClass*)                                      = nullptr;
-    bool           (*class_is_valuetype)(Il2CppClass*)                                   = nullptr;
-    bool           (*class_is_enum)(Il2CppClass*)                                        = nullptr;
-    bool           (*class_is_abstract)(Il2CppClass*)                                    = nullptr;
-    bool           (*class_is_interface)(Il2CppClass*)                                   = nullptr;
-    bool           (*class_is_generic)(Il2CppClass*)                                     = nullptr;
-    bool           (*class_is_inflated)(Il2CppClass*)                                    = nullptr;
-    Il2CppClass*   (*class_get_parent)(Il2CppClass*)                                     = nullptr;
-    Il2CppClass*   (*class_get_interfaces)(Il2CppClass*, void**)                         = nullptr;
-    Il2CppClass*   (*class_get_nested_types)(Il2CppClass*, void**)                       = nullptr;
-    FieldInfo*     (*class_get_fields)(Il2CppClass*, void**)                             = nullptr;
-    PropertyInfo*  (*class_get_properties)(Il2CppClass*, void**)                         = nullptr;
-    const MethodInfo* (*class_get_methods)(Il2CppClass*, void**)                         = nullptr;
-    const MethodInfo* (*class_get_method_from_name)(Il2CppClass*, const char*, int)      = nullptr;
-    Il2CppClass*   (*class_from_name)(const Il2CppImage*, const char*, const char*)      = nullptr;
-    Il2CppClass*   (*class_from_system_type)(Il2CppReflectionType*)                      = nullptr;
-    const Il2CppImage* (*get_corlib)()                                                   = nullptr;
-    uint32_t       (*field_get_flags)(FieldInfo*)                                        = nullptr;
-    const char*    (*field_get_name)(FieldInfo*)                                         = nullptr;
-    size_t         (*field_get_offset)(FieldInfo*)                                       = nullptr;
-    const Il2CppType* (*field_get_type)(FieldInfo*)                                      = nullptr;
-    void           (*field_static_get_value)(FieldInfo*, void*)                          = nullptr;
-    uint32_t       (*property_get_flags)(PropertyInfo*)                                  = nullptr;
-    const MethodInfo* (*property_get_get_method)(PropertyInfo*)                          = nullptr;
-    const MethodInfo* (*property_get_set_method)(PropertyInfo*)                          = nullptr;
-    const char*    (*property_get_name)(PropertyInfo*)                                   = nullptr;
-    const Il2CppType* (*method_get_return_type)(const MethodInfo*)                       = nullptr;
-    const char*    (*method_get_name)(const MethodInfo*)                                 = nullptr;
-    uint32_t       (*method_get_param_count)(const MethodInfo*)                          = nullptr;
-    const Il2CppType* (*method_get_param)(const MethodInfo*, uint32_t)                   = nullptr;
-    uint32_t       (*method_get_flags)(const MethodInfo*, uint32_t*)                     = nullptr;
-    const char*    (*method_get_param_name)(const MethodInfo*, uint32_t)                 = nullptr;
-    bool           (*type_is_byref)(const Il2CppType*)                                   = nullptr;
-    Il2CppThread*  (*thread_attach)(Il2CppDomain*)                                       = nullptr;
-    bool           (*is_vm_thread)(Il2CppThread*)                                        = nullptr;
-    Il2CppString*  (*string_new)(const char*)                                            = nullptr;
+    bool                   (*init)(const char*, int)                               = nullptr;
+    Il2CppDomain*          (*domain_get)()                                         = nullptr;
+    const Il2CppAssembly** (*domain_get_assemblies)(const Il2CppDomain*, size_t*)  = nullptr;
+    const Il2CppImage*     (*assembly_get_image)(const Il2CppAssembly*)            = nullptr;
+    const char*            (*image_get_name)(const Il2CppImage*)                   = nullptr;
+    size_t                 (*image_get_class_count)(const Il2CppImage*)            = nullptr;
+    Il2CppClass*           (*image_get_class)(const Il2CppImage*, size_t)          = nullptr;
+    const Il2CppType*      (*class_get_type)(Il2CppClass*)                         = nullptr;
+    Il2CppClass*           (*class_from_type)(const Il2CppType*)                   = nullptr;
+    const char*            (*class_get_name)(Il2CppClass*)                         = nullptr;
+    const char*            (*class_get_namespace)(Il2CppClass*)                    = nullptr;
+    uint32_t               (*class_get_flags)(Il2CppClass*)                        = nullptr;
+    bool                   (*class_is_valuetype)(Il2CppClass*)                     = nullptr;
+    bool                   (*class_is_enum)(Il2CppClass*)                          = nullptr;
+    bool                   (*class_is_abstract)(Il2CppClass*)                      = nullptr;
+    bool                   (*class_is_interface)(Il2CppClass*)                     = nullptr;
+    bool                   (*class_is_generic)(Il2CppClass*)                       = nullptr;
+    bool                   (*class_is_inflated)(Il2CppClass*)                      = nullptr;
+    Il2CppClass*           (*class_get_parent)(Il2CppClass*)                       = nullptr;
+    Il2CppClass*           (*class_get_interfaces)(Il2CppClass*, void**)           = nullptr;
+    Il2CppClass*           (*class_get_nested_types)(Il2CppClass*, void**)         = nullptr;
+    FieldInfo*             (*class_get_fields)(Il2CppClass*, void**)               = nullptr;
+    PropertyInfo*          (*class_get_properties)(Il2CppClass*, void**)           = nullptr;
+    const MethodInfo*      (*class_get_methods)(Il2CppClass*, void**)              = nullptr;
+    const MethodInfo*      (*class_get_method_from_name)(Il2CppClass*, const char*, int) = nullptr;
+    Il2CppClass*           (*class_from_name)(const Il2CppImage*, const char*, const char*) = nullptr;
+    Il2CppClass*           (*class_from_system_type)(Il2CppReflectionType*)        = nullptr;
+    const Il2CppImage*     (*get_corlib)()                                         = nullptr;
+    uint32_t               (*field_get_flags)(FieldInfo*)                          = nullptr;
+    const char*            (*field_get_name)(FieldInfo*)                           = nullptr;
+    size_t                 (*field_get_offset)(FieldInfo*)                         = nullptr;
+    const Il2CppType*      (*field_get_type)(FieldInfo*)                           = nullptr;
+    void                   (*field_static_get_value)(FieldInfo*, void*)            = nullptr;
+    uint32_t               (*property_get_flags)(PropertyInfo*)                    = nullptr;
+    const MethodInfo*      (*property_get_get_method)(PropertyInfo*)               = nullptr;
+    const MethodInfo*      (*property_get_set_method)(PropertyInfo*)               = nullptr;
+    const char*            (*property_get_name)(PropertyInfo*)                     = nullptr;
+    const Il2CppType*      (*method_get_return_type)(const MethodInfo*)            = nullptr;
+    const char*            (*method_get_name)(const MethodInfo*)                   = nullptr;
+    uint32_t               (*method_get_param_count)(const MethodInfo*)            = nullptr;
+    const Il2CppType*      (*method_get_param)(const MethodInfo*, uint32_t)        = nullptr;
+    uint32_t               (*method_get_flags)(const MethodInfo*, uint32_t*)       = nullptr;
+    const char*            (*method_get_param_name)(const MethodInfo*, uint32_t)   = nullptr;
+    bool                   (*type_is_byref)(const Il2CppType*)                     = nullptr;
+    Il2CppThread*          (*thread_attach)(Il2CppDomain*)                         = nullptr;
+    bool                   (*is_vm_thread)(Il2CppThread*)                          = nullptr;
+    Il2CppString*          (*string_new)(const char*)                              = nullptr;
 };
 
 static FunctionTable g_api;
@@ -680,7 +675,7 @@ static void populateFunctionTable(uintptr_t base) {
 
     if (critical_missing) {
         LOGW("Critical symbols missing -- full adaptive pattern scan starting");
-        auto s = scanner::scanAllSymbols(base);
+        const auto s = scanner::scanAllSymbols(base);
         applyFallback(s.domain_get,                 g_api.domain_get);
         applyFallback(s.domain_get_assemblies,      g_api.domain_get_assemblies);
         applyFallback(s.image_get_class,            g_api.image_get_class);
@@ -733,8 +728,8 @@ static std::string buildMethodModifier(uint32_t flags) {
 
 static std::string safeClassName(Il2CppClass* klass) {
     if (!klass) return "object";
-    auto& api  = il2cpp_api::g_api;
-    auto  name = api.class_get_name ? api.class_get_name(klass) : nullptr;
+    auto& api        = il2cpp_api::g_api;
+    const auto* name = api.class_get_name ? api.class_get_name(klass) : nullptr;
     return std::string(safeStr(name, "object"));
 }
 
@@ -772,7 +767,7 @@ static std::string resolveTypeName(const Il2CppType* t) {
     if (!t) return "void";
     auto& api = il2cpp_api::g_api;
 
-    bool is_byref = api.type_is_byref && api.type_is_byref(t);
+    const bool is_byref    = api.type_is_byref && api.type_is_byref(t);
     Il2CppClass* klass = api.class_from_type ? api.class_from_type(t) : nullptr;
     std::string  base  = safeClassName(klass);
 
@@ -801,20 +796,20 @@ static std::vector<MethodEntry> extractMethods(Il2CppClass* klass) {
         e.name = safeStr(api.method_get_name ? api.method_get_name(method) : nullptr, "?");
 
         uint32_t impl_flags = 0;
-        uint32_t flags = api.method_get_flags ? api.method_get_flags(method, &impl_flags) : 0;
+        const uint32_t flags = api.method_get_flags ? api.method_get_flags(method, &impl_flags) : 0;
         e.modifier = buildMethodModifier(flags);
 
         const Il2CppType* rt = api.method_get_return_type
                                ? api.method_get_return_type(method) : nullptr;
         e.return_type = resolveTypeName(rt);
 
-        uint32_t pcount = api.method_get_param_count
-                          ? api.method_get_param_count(method) : 0;
+        const uint32_t pcount = api.method_get_param_count
+                                ? api.method_get_param_count(method) : 0;
         for (uint32_t i = 0; i < pcount; ++i) {
-            const Il2CppType* pt  = api.method_get_param
-                                    ? api.method_get_param(method, i) : nullptr;
-            const char*       pn  = api.method_get_param_name
-                                    ? api.method_get_param_name(method, i) : nullptr;
+            const Il2CppType* pt = api.method_get_param
+                                   ? api.method_get_param(method, i) : nullptr;
+            const char* pn       = api.method_get_param_name
+                                   ? api.method_get_param_name(method, i) : nullptr;
             e.params.emplace_back(resolveTypeName(pt), safeStr(pn, "arg"));
         }
 
@@ -839,11 +834,12 @@ static std::vector<FieldEntry> extractFields(Il2CppClass* klass) {
     FieldInfo* field = nullptr;
     while ((field = api.class_get_fields(klass, &iter)) != nullptr) {
         FieldEntry e;
-        e.name = safeStr(api.field_get_name ? api.field_get_name(field) : nullptr, "?");
+        e.name      = safeStr(api.field_get_name ? api.field_get_name(field) : nullptr, "?");
         const Il2CppType* ft = api.field_get_type ? api.field_get_type(field) : nullptr;
         e.type_name = resolveTypeName(ft);
-        e.offset    = api.field_get_offset ? static_cast<uint64_t>(api.field_get_offset(field)) : 0u;
-        uint32_t fg = api.field_get_flags ? api.field_get_flags(field) : 0;
+        e.offset    = api.field_get_offset
+                      ? static_cast<uint64_t>(api.field_get_offset(field)) : 0u;
+        const uint32_t fg = api.field_get_flags ? api.field_get_flags(field) : 0;
         e.is_static = (fg & FIELD_ATTRIBUTE_STATIC) != 0;
         e.modifier  = e.is_static ? "static " : "";
         result.push_back(std::move(e));
@@ -861,10 +857,9 @@ static std::vector<PropertyEntry> extractProperties(Il2CppClass* klass) {
     while ((prop = api.class_get_properties(klass, &iter)) != nullptr) {
         PropertyEntry e;
         e.name       = safeStr(api.property_get_name ? api.property_get_name(prop) : nullptr, "?");
-        e.has_getter = api.property_get_get_method && api.property_get_get_method(prop);
-        e.has_setter = api.property_get_set_method && api.property_get_set_method(prop);
-        const MethodInfo* getter = e.has_getter
-                                   ? api.property_get_get_method(prop) : nullptr;
+        e.has_getter = api.property_get_get_method && (api.property_get_get_method(prop) != nullptr);
+        e.has_setter = api.property_get_set_method && (api.property_get_set_method(prop) != nullptr);
+        const MethodInfo* getter = e.has_getter ? api.property_get_get_method(prop) : nullptr;
         if (getter) {
             const Il2CppType* pt = api.method_get_return_type
                                    ? api.method_get_return_type(getter) : nullptr;
@@ -886,37 +881,53 @@ static void writeCppHeader(const std::string& out_dir,
 {
     ensureDirectory(out_dir);
 
-    std::string path = out_dir + "/" + image_name + ".h";
-    std::ofstream f(path);
-    if (!f.is_open()) { LOGE("header write: %s failed", path.c_str()); return; }
+    const std::string path = out_dir + "/" + image_name + ".h";
+    async_io::AsyncWriter w;
+    if (!w.open(path)) { LOGE("header write: %s failed", path.c_str()); return; }
 
-    f << "#pragma once\n#include <cstdint>\n\n";
+    w.write("#pragma once\n#include <cstdint>\n\n");
 
-    for (auto& cls : classes) {
-        if (!cls.ns.empty()) f << "namespace " << cls.ns << " {\n";
-        if (cls.is_interface)      f << "struct /* interface */ " << cls.name;
-        else if (cls.is_enum)      f << "enum class " << cls.name;
-        else                       f << "struct " << cls.name;
-        if (!cls.parent.empty() && cls.parent != "object")
-            f << " : public " << cls.parent;
-        f << " {\n";
+    for (const auto& cls : classes) {
+        std::string block;
+        block.reserve(4096);
 
-        for (auto& fld : cls.fields) {
-            f << "    " << fld.modifier << fld.type_name << " " << fld.name
-              << "; // 0x" << std::hex << fld.offset << std::dec << "\n";
+        if (!cls.ns.empty()) { block += "namespace "; block += cls.ns; block += " {\n"; }
+
+        if (cls.is_interface)      { block += "struct /* interface */ "; block += cls.name; }
+        else if (cls.is_enum)      { block += "enum class "; block += cls.name; }
+        else                       { block += "struct "; block += cls.name; }
+
+        if (!cls.parent.empty() && cls.parent != "object") {
+            block += " : public "; block += cls.parent;
         }
-        for (auto& m : cls.methods) {
-            f << "    " << m.modifier << m.return_type << " " << m.name << "(";
+        block += " {\n";
+
+        for (const auto& fld : cls.fields) {
+            char hex[32];
+            snprintf(hex, sizeof(hex), "%" PRIx64, fld.offset);
+            block += "    "; block += fld.modifier; block += fld.type_name;
+            block += " "; block += fld.name; block += "; // 0x"; block += hex; block += "\n";
+        }
+
+        for (const auto& m : cls.methods) {
+            char rva[32];
+            snprintf(rva, sizeof(rva), "%" PRIx64, m.rva);
+            block += "    "; block += m.modifier; block += m.return_type;
+            block += " "; block += m.name; block += "(";
             for (size_t i = 0; i < m.params.size(); ++i) {
-                if (i) f << ", ";
-                f << m.params[i].first << " " << m.params[i].second;
+                if (i) block += ", ";
+                block += m.params[i].first; block += " "; block += m.params[i].second;
             }
-            f << "); // RVA: 0x" << std::hex << m.rva << std::dec << "\n";
+            block += "); // RVA: 0x"; block += rva; block += "\n";
         }
-        f << "};\n";
-        if (!cls.ns.empty()) f << "} // namespace " << cls.ns << "\n";
-        f << "\n";
+
+        block += "};\n";
+        if (!cls.ns.empty()) { block += "} // namespace "; block += cls.ns; block += "\n"; }
+        block += "\n";
+        w.write(block);
     }
+
+    w.close();
     LOGI("C++ header written: %s (%zu classes)", path.c_str(), classes.size());
 }
 
@@ -926,24 +937,29 @@ static void writeFridaScript(const std::string& out_dir,
 {
     ensureDirectory(out_dir);
 
-    std::string path = out_dir + "/" + image_name + ".js";
-    std::ofstream f(path);
-    if (!f.is_open()) { LOGE("frida script write: %s failed", path.c_str()); return; }
+    const std::string path = out_dir + "/" + image_name + ".js";
+    async_io::AsyncWriter w;
+    if (!w.open(path)) { LOGE("frida script write: %s failed", path.c_str()); return; }
 
-    f << "var il2cpp_base = Module.findBaseAddress('libil2cpp.so');\n"
-      << "if (!il2cpp_base) throw new Error('libil2cpp.so not found');\n\n";
+    w.write("var il2cpp_base = Module.findBaseAddress('libil2cpp.so');\n");
+    w.write("if (!il2cpp_base) throw new Error('libil2cpp.so not found');\n\n");
 
-    for (auto& cls : classes) {
-        for (auto& m : cls.methods) {
+    for (const auto& cls : classes) {
+        for (const auto& m : cls.methods) {
             if (!m.rva) continue;
-            f << "var addr_" << cls.name << "_" << m.name
-              << " = il2cpp_base.add(0x" << std::hex << m.rva << std::dec << ");\n"
-              << "Interceptor.attach(addr_" << cls.name << "_" << m.name << ", {\n"
-              << "    onEnter: function(args) {},\n"
-              << "    onLeave: function(retval) {}\n"
-              << "});\n\n";
+            char rva[32];
+            snprintf(rva, sizeof(rva), "%" PRIx64, m.rva);
+            std::string entry;
+            entry.reserve(256);
+            entry += "var addr_"; entry += cls.name; entry += "_"; entry += m.name;
+            entry += " = il2cpp_base.add(0x"; entry += rva; entry += ");\n";
+            entry += "Interceptor.attach(addr_"; entry += cls.name; entry += "_"; entry += m.name;
+            entry += ", {\n    onEnter: function(args) {},\n    onLeave: function(retval) {}\n});\n\n";
+            w.write(entry);
         }
     }
+
+    w.close();
     LOGI("Frida script written: %s (%zu classes)", path.c_str(), classes.size());
 }
 
@@ -968,9 +984,7 @@ static void runDump(const std::string& out_dir, const config::DumperConfig& cfg)
     const Il2CppAssembly** assemblies = api.domain_get_assemblies
                                         ? api.domain_get_assemblies(domain, &count)
                                         : nullptr;
-    if (!assemblies || !count) {
-        LOGE("runDump: assembly list empty"); return;
-    }
+    if (!assemblies || !count) { LOGE("runDump: assembly list empty"); return; }
 
     LOGI("runDump: %zu assemblies found", count);
     ensureDirectory(out_dir);
@@ -985,11 +999,11 @@ static void runDump(const std::string& out_dir, const config::DumperConfig& cfg)
 
         const char* img_name = api.image_get_name ? api.image_get_name(image) : nullptr;
         std::string name     = safeStr(img_name, "unknown");
-        if (name.size() > 4 && name.substr(name.size() - 4) == ".dll")
-            name = name.substr(0, name.size() - 4);
+        if (name.size() > 4u && name.substr(name.size() - 4u) == ".dll")
+            name = name.substr(0u, name.size() - 4u);
 
-        size_t cls_count = api.image_get_class_count
-                           ? api.image_get_class_count(image) : 0;
+        const size_t cls_count = api.image_get_class_count
+                                 ? api.image_get_class_count(image) : 0u;
         LOGI("image[%zu]: %s (%zu classes)", ai, name.c_str(), cls_count);
 
         std::vector<ClassEntry> classes;
@@ -1001,8 +1015,8 @@ static void runDump(const std::string& out_dir, const config::DumperConfig& cfg)
             if (!klass) continue;
 
             ClassEntry e;
-            e.name        = safeStr(api.class_get_name      ? api.class_get_name(klass)      : nullptr, "?");
-            e.ns          = safeStr(api.class_get_namespace  ? api.class_get_namespace(klass)  : nullptr);
+            e.name        = safeStr(api.class_get_name     ? api.class_get_name(klass)     : nullptr, "?");
+            e.ns          = safeStr(api.class_get_namespace ? api.class_get_namespace(klass) : nullptr);
             e.full_name   = e.ns.empty() ? e.name : (e.ns + "." + e.name);
             e.is_abstract  = api.class_is_abstract  && api.class_is_abstract(klass);
             e.is_interface = api.class_is_interface && api.class_is_interface(klass);
@@ -1030,12 +1044,12 @@ static void runDump(const std::string& out_dir, const config::DumperConfig& cfg)
 namespace {
 
 [[nodiscard]] static int64_t exponentialDelay(int attempt) noexcept {
-    int64_t ms = 200LL * (1LL << std::min(attempt, 5));
+    const int64_t ms = 200LL * (1LL << std::min(attempt, 5));
     return std::min(ms, static_cast<int64_t>(2000));
 }
 
-static void stealthWait(int64_t ms) {
-    int efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+static void stealthWait(int64_t ms) noexcept {
+    int efd = eventfd(0u, EFD_CLOEXEC | EFD_NONBLOCK);
     if (efd >= 0) {
         struct pollfd pf = { efd, POLLIN, 0 };
         poll(&pf, 1, static_cast<int>(ms));
@@ -1048,17 +1062,15 @@ static void stealthWait(int64_t ms) {
 static void hackStart(
     const std::string&          game_dir,
     const std::string&          out_dir,
-    const config::DumperConfig& cfg
-) {
+    const config::DumperConfig& cfg)
+{
     if (isZygoteProcess()) {
         LOGE("[BootGuard] hackStart called from Zygote -- aborting");
         return;
     }
-
     if (!isApiLevelSupported()) {
-        int api = getAndroidApiLevel();
-        LOGE("[ApiGuard] Android API %d not in supported range [%d-%d] -- aborting",
-             api, config::kAndroidMinApi, config::kAndroidMaxApi);
+        LOGE("[ApiGuard] Android API %d not in range [%d-%d] -- aborting",
+             getAndroidApiLevel(), config::kAndroidMinApi, config::kAndroidMaxApi);
         return;
     }
 
@@ -1066,31 +1078,27 @@ static void hackStart(
          gettid(), game_dir.c_str(), out_dir.c_str(), getAndroidApiLevel());
 
     constexpr int     kMaxRetries = 20;
-    constexpr int64_t kMaxTotalMs = 30'000;
+    constexpr int64_t kMaxTotalMs = 30'000LL;
     int64_t           elapsed_ms  = 0;
 
     for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
-        uintptr_t base = scanner::findLibBase("libil2cpp.so");
+        const uintptr_t base = scanner::findLibBase("libil2cpp.so");
         if (base) {
             LOGI("libil2cpp.so found base=0x%" PRIxPTR " attempt=%d", base, attempt);
-
             if (cfg.Protected_Breaker && !metadata_hook::s_fired.load())
                 metadata_hook::install(base, out_dir);
-
             runApiInit(base);
             runDump(out_dir, cfg);
             return;
         }
 
-        auto delay  = exponentialDelay(attempt);
+        const auto delay = exponentialDelay(attempt);
         elapsed_ms += delay;
         if (elapsed_ms >= kMaxTotalMs) {
             LOGE("[BootGuard] TIMEOUT: libil2cpp.so not found in 30s -- stopping");
             return;
         }
-
-        LOGI("libil2cpp.so not ready attempt=%d delay=%" PRId64 "ms elapsed=%" PRId64 "ms",
-             attempt, delay, elapsed_ms);
+        LOGI("libil2cpp.so not ready attempt=%d delay=%" PRId64 "ms", attempt, delay);
         stealthWait(delay);
     }
     LOGE("libil2cpp.so not found after %d attempts tid=%d", kMaxRetries, gettid());
@@ -1099,13 +1107,13 @@ static void hackStart(
 static void hackPrepare(
     const std::string&          game_dir,
     const std::string&          out_dir,
-    const config::DumperConfig& cfg
-) {
+    const config::DumperConfig& cfg)
+{
     LOGI("hack_prepare tid=%d api=%d", gettid(), getAndroidApiLevel());
 #if defined(__arm__)
-    LOGI("mode: ARMv7/Thumb-2 (32-bit)");
+    LOGI("mode: ARMv7/Thumb-2 (32-bit mobile)");
 #elif defined(__aarch64__)
-    LOGI("mode: AArch64 (64-bit)");
+    LOGI("mode: AArch64 (64-bit mobile)");
 #elif defined(__x86_64__)
     LOGI("mode: x86_64 (64-bit emulator)");
 #elif defined(__i386__)
@@ -1114,62 +1122,17 @@ static void hackPrepare(
     hackStart(game_dir, out_dir, cfg);
 }
 
-static void launchOnLoadDump(const config::DumperConfig& cfg) {
-    bool expected = false;
-    if (!s_onload_dump_started.compare_exchange_strong(expected, true)) {
-        LOGI("[onLoad-Dump] already launched, skipping");
-        return;
-    }
-
-    std::string out = cfg.Output.empty()
-                      ? std::string(config::kFallbackOutput)
-                      : cfg.Output;
-
-    LOGI("[onLoad-Dump] launching dump thread Target=%s Out=%s",
-         cfg.Target_Game.c_str(), out.c_str());
-
-    installSigsegvHandler();
-
-    if (cfg.Protected_Breaker) {
-        std::lock_guard<std::mutex> lk(s_early_cfg_mutex);
-        s_early_out_dir = out;
-        s_early_cfg     = cfg;
-    }
-
-    if (cfg.Protected_Breaker) {
-        installDlopenHook(out, cfg);
-    }
-
-    config::DumperConfig c = cfg;
-    std::thread([out = std::move(out), c = std::move(c)]() mutable {
-        hackPrepare("", out, c);
-    }).detach();
-}
-
 } // anonymous namespace
 
 class EaquelDumperModule : public rezygisk::ModuleBase {
 public:
 
     void onLoad(rezygisk::Api* api_, JNIEnv* env_) override {
+        api_ = api_;
+        env_ = env_;
         this->api = api_;
         this->env = env_;
-        LOGI("[Module] onLoad: registered (Zygote safe mode)");
-
-        auto cfg = config::loadConfig();
-        {
-            std::lock_guard<std::mutex> lk(cfg_mutex_);
-            active_cfg = cfg;
-        }
-
-        if (!config::isExplicitTarget(cfg) && !config::isWildcardTarget(cfg)) {
-            LOGW("[onLoad] No valid target configured -- waiting for preAppSpecialize");
-            return;
-        }
-
-        LOGI("[onLoad] Config valid Target=%s -- launching zygote-based dump immediately",
-             cfg.Target_Game.c_str());
-        launchOnLoadDump(cfg);
+        LOGI("[Module] onLoad: registered -- Zygote safe, waiting for preAppSpecialize");
     }
 
     void preAppSpecialize(rezygisk::AppSpecializeArgs* args) override {
@@ -1178,26 +1141,27 @@ public:
             return;
         }
 
-        const char* pkg = nullptr;
-        const char* dir = nullptr;
-        if (args->nice_name)    pkg = env->GetStringUTFChars(args->nice_name,    nullptr);
-        if (args->app_data_dir) dir = env->GetStringUTFChars(args->app_data_dir, nullptr);
+        const char* raw_pkg = nullptr;
+        const char* raw_dir = nullptr;
+        if (args->nice_name)    raw_pkg = env->GetStringUTFChars(args->nice_name,    nullptr);
+        if (args->app_data_dir) raw_dir = env->GetStringUTFChars(args->app_data_dir, nullptr);
 
-        std::string pkg_str = pkg ? pkg : "";
-        std::string dir_str = dir ? dir : "";
+        const std::string pkg_str = raw_pkg ? raw_pkg : "";
+        const std::string dir_str = raw_dir ? raw_dir : "";
 
-        if (pkg) env->ReleaseStringUTFChars(args->nice_name,    pkg);
-        if (dir) env->ReleaseStringUTFChars(args->app_data_dir, dir);
+        if (raw_pkg) env->ReleaseStringUTFChars(args->nice_name,    raw_pkg);
+        if (raw_dir) env->ReleaseStringUTFChars(args->app_data_dir, raw_dir);
 
-        if (shouldIgnoreProcess(pkg_str)) {
+        if (pkg_str.empty() || shouldIgnoreProcess(pkg_str)) {
             api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
             return;
         }
 
-        config::DumperConfig fresh_cfg = config::loadConfig();
+        const config::DumperConfig fresh_cfg = config::loadConfig();
+
         {
             std::lock_guard<std::mutex> lk(cfg_mutex_);
-            active_cfg = fresh_cfg;
+            active_cfg_ = fresh_cfg;
         }
 
         if (config::isExplicitTarget(fresh_cfg)) {
@@ -1205,7 +1169,7 @@ public:
                 api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
                 return;
             }
-            preSpecialize(pkg_str, dir_str);
+            prepareTarget(pkg_str, dir_str, fresh_cfg);
             return;
         }
 
@@ -1214,7 +1178,7 @@ public:
                 api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
                 return;
             }
-            preSpecialize(pkg_str, dir_str);
+            prepareTarget(pkg_str, dir_str, fresh_cfg);
             return;
         }
 
@@ -1222,54 +1186,87 @@ public:
     }
 
     void postAppSpecialize(const rezygisk::AppSpecializeArgs*) override {
-        if (!enable_hack) return;
+        if (!enable_hack_) return;
 
         if (isZygoteProcess()) {
-            LOGE("[BootGuard] postAppSpecialize from Zygote -- cancelled");
+            LOGE("[BootGuard] postAppSpecialize called in Zygote context -- cancelled");
+            enable_hack_ = false;
             return;
         }
 
         if (!isApiLevelSupported()) {
-            LOGE("[ApiGuard] unsupported API level -- cancelled");
+            LOGE("[ApiGuard] unsupported API level %d -- cancelled", getAndroidApiLevel());
+            enable_hack_ = false;
             return;
         }
 
-        LOGI("[Module] postAppSpecialize: starting hack in target process");
+        LOGI("[Module] postAppSpecialize: target process confirmed, starting operations");
 
         installSigsegvHandler();
 
-        if (active_cfg.Protected_Breaker) {
-            installDlopenHook(out_dir, active_cfg);
+        config::DumperConfig cfg_copy;
+        std::string          out_copy;
+        std::string          game_copy;
+        {
+            std::lock_guard<std::mutex> lk(cfg_mutex_);
+            cfg_copy  = active_cfg_;
+            out_copy  = out_dir_;
+            game_copy = game_dir_;
+        }
+
+        if (cfg_copy.Protected_Breaker) {
+            installDlopenHook(out_copy, cfg_copy);
         }
 
         startConfigWatcher();
 
         if (s_orig_dlopen && s_orig_dlopen != dlopen) {
-            LOGI("postAppSpecialize: dlopen early hook active");
+            LOGI("postAppSpecialize: dlopen early hook active -- waiting for trigger");
             return;
         }
 
-        std::string g = game_dir;
-        std::string o = out_dir;
-        config::DumperConfig c;
-        {
-            std::lock_guard<std::mutex> lk(cfg_mutex_);
-            c = active_cfg;
-        }
-        std::thread([g = std::move(g), o = std::move(o), c = std::move(c)]() mutable {
+        std::thread([g = std::move(game_copy),
+                     o = std::move(out_copy),
+                     c = std::move(cfg_copy)]() mutable {
             hackPrepare(g, o, c);
         }).detach();
     }
 
 private:
-    rezygisk::Api*        api          = nullptr;
-    JNIEnv*               env          = nullptr;
-    bool                  enable_hack  = false;
-    std::string           game_dir, out_dir;
-    config::DumperConfig  active_cfg;
+    rezygisk::Api*       api         = nullptr;
+    JNIEnv*              env         = nullptr;
+    bool                 enable_hack_ = false;
+    std::string          game_dir_;
+    std::string          out_dir_;
+    config::DumperConfig active_cfg_;
     config::ConfigWatcher watcher_;
-    std::mutex            cfg_mutex_;
-    std::atomic<bool>     dump_running_{false};
+    std::mutex           cfg_mutex_;
+    std::atomic<bool>    dump_running_{false};
+
+    void prepareTarget(const std::string& pkg,
+                       const std::string& app_data_dir,
+                       const config::DumperConfig& cfg)
+    {
+        LOGI("prepareTarget: pkg=%s  dir=%s  Target=%s  api=%d",
+             pkg.c_str(), app_data_dir.c_str(), cfg.Target_Game.c_str(), getAndroidApiLevel());
+
+        enable_hack_ = true;
+
+        {
+            std::lock_guard<std::mutex> lk(cfg_mutex_);
+            game_dir_   = app_data_dir;
+            out_dir_    = cfg.Output.empty()
+                          ? std::string(config::kFallbackOutput)
+                          : cfg.Output;
+            active_cfg_ = cfg;
+        }
+
+        LOGI("TARGET CONFIRMED: %s  [64bit=%d  api=%d  out=%s]",
+             pkg.c_str(),
+             static_cast<int>(cfg.is_64bit),
+             getAndroidApiLevel(),
+             out_dir_.c_str());
+    }
 
     void triggerReDump(const config::DumperConfig& new_cfg) {
         bool expected = false;
@@ -1278,21 +1275,24 @@ private:
             return;
         }
 
-        std::string new_out = new_cfg.Output.empty()
-                              ? std::string(config::kFallbackOutput)
-                              : new_cfg.Output;
+        const std::string new_out = new_cfg.Output.empty()
+                                    ? std::string(config::kFallbackOutput)
+                                    : new_cfg.Output;
 
         if (new_cfg.Protected_Breaker) {
             metadata_hook::resetForReload(new_out);
         }
 
-        uintptr_t base = scanner::findLibBase("libil2cpp.so");
+        const uintptr_t base = scanner::findLibBase("libil2cpp.so");
         if (!base) {
-            LOGW("hot-reload: libil2cpp.so not yet loaded, starting hackStart");
-            std::string g = game_dir;
+            LOGW("hot-reload: libil2cpp.so not yet loaded, using hackPrepare");
+            std::string g;
+            {
+                std::lock_guard<std::mutex> lk(cfg_mutex_);
+                g = game_dir_;
+            }
             config::DumperConfig c = new_cfg;
-            std::thread([g = std::move(g), o = new_out, c = std::move(c),
-                         this]() mutable {
+            std::thread([g = std::move(g), o = new_out, c = std::move(c), this]() mutable {
                 hackPrepare(g, o, c);
                 dump_running_.store(false, std::memory_order_release);
             }).detach();
@@ -1311,8 +1311,7 @@ private:
         watcher_.start([this](const config::DumperConfig& new_cfg) {
             {
                 std::lock_guard<std::mutex> lk(cfg_mutex_);
-                active_cfg  = new_cfg;
-                s_early_cfg = new_cfg;
+                active_cfg_ = new_cfg;
             }
             LOGI("hot-reload: config updated Target=%s Cpp=%d Frida=%d Out=%s",
                  new_cfg.Target_Game.c_str(),
@@ -1320,7 +1319,7 @@ private:
                  static_cast<int>(new_cfg.Frida_Script),
                  new_cfg.Output.c_str());
 
-            if (enable_hack) {
+            if (enable_hack_) {
                 {
                     std::lock_guard<std::mutex> lk(s_early_cfg_mutex);
                     s_early_out_dir = new_cfg.Output.empty()
@@ -1331,48 +1330,6 @@ private:
                 triggerReDump(new_cfg);
             }
         });
-    }
-
-    void preSpecialize(const std::string& pkg, const std::string& app_data_dir) {
-        LOGI("preSpecialize: pkg=%s  dir=%s  Target=%s",
-             pkg.c_str(), app_data_dir.c_str(), active_cfg.Target_Game.c_str());
-
-        bool is_target = false;
-
-        if (config::isWildcardTarget(active_cfg)) {
-            if (process_filter::isThirdPartyApp(pkg) || isInstalledAsUserApp(pkg)) {
-                is_target = true;
-                LOGI("Target_Game=! wildcard match for third-party app %s", pkg.c_str());
-            }
-        } else if (config::isExplicitTarget(active_cfg)) {
-            if (active_cfg.Target_Game == pkg) {
-                is_target = true;
-                LOGI("Explicit target match: %s", pkg.c_str());
-            } else if (!app_data_dir.empty() &&
-                       app_data_dir.find(active_cfg.Target_Game) != std::string::npos) {
-                is_target = true;
-                LOGI("Explicit target detected via app_data_dir");
-            }
-        }
-
-        if (!is_target) {
-            LOGI("Not target package -- closing module");
-            api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
-            return;
-        }
-
-        LOGI("TARGET DETECTED: %s  [64bit=%d  api=%d]",
-             active_cfg.Target_Game.c_str(),
-             static_cast<int>(active_cfg.is_64bit),
-             getAndroidApiLevel());
-
-        enable_hack = true;
-        game_dir    = app_data_dir;
-        out_dir     = active_cfg.Output.empty()
-                      ? std::string(config::kFallbackOutput)
-                      : active_cfg.Output;
-
-        LOGI("output dir: %s", out_dir.c_str());
     }
 };
 
@@ -1388,11 +1345,12 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     }
 
     if (!isApiLevelSupported()) {
-        LOGI("[ApiGuard] JNI_OnLoad: unsupported API -- safe return");
+        LOGI("[ApiGuard] JNI_OnLoad: API %d not in range [%d-%d] -- safe return",
+             getAndroidApiLevel(), config::kAndroidMinApi, config::kAndroidMaxApi);
         return JNI_VERSION_1_6;
     }
 
-    LOGI("[JNI_OnLoad] target process -- starting hack");
+    LOGI("[JNI_OnLoad] target process -- starting hack tid=%d", gettid());
     installSigsegvHandler();
 
     config::DumperConfig cfg = config::loadConfig();
@@ -1402,11 +1360,11 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     std::string game;
 
     if (reserved) {
-        std::string combined(static_cast<const char*>(reserved));
-        auto sep = combined.find('|');
+        const std::string combined(static_cast<const char*>(reserved));
+        const auto sep = combined.find('|');
         if (sep != std::string::npos) {
-            game = combined.substr(0, sep);
-            std::string explicit_out = combined.substr(sep + 1);
+            game = combined.substr(0u, sep);
+            const std::string explicit_out = combined.substr(sep + 1u);
             if (!explicit_out.empty()) out = explicit_out;
         } else {
             game = combined;
@@ -1415,11 +1373,9 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
 
     if (cfg.Output.empty()) cfg.Output = out;
 
-    std::string o = out;
-    std::string g = game;
-    config::DumperConfig c = cfg;
-
-    std::thread([g = std::move(g), o = std::move(o), c = std::move(c)]() mutable {
+    std::thread([g = std::move(game),
+                 o = std::move(out),
+                 c = std::move(cfg)]() mutable {
         hackStart(g, o, c);
     }).detach();
 

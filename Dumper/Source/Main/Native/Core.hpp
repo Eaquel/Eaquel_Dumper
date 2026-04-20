@@ -20,7 +20,6 @@
 #include <chrono>
 #include <span>
 #include <ranges>
-#include <algorithm>
 #include <concepts>
 #include <expected>
 #include <format>
@@ -31,20 +30,22 @@
 #include <sys/inotify.h>
 #include <sys/eventfd.h>
 #include <sys/system_properties.h>
+#include <sys/uio.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <link.h>
+#include <elf.h>
 #include <signal.h>
 #include <errno.h>
 #include <dirent.h>
+#include <time.h>
 
 #define LOG_TAG "Eaquel"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
-
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 
 inline constexpr uint32_t FIELD_ATTRIBUTE_FIELD_ACCESS_MASK    = 0x0007u;
 inline constexpr uint32_t FIELD_ATTRIBUTE_COMPILER_CONTROLLED  = 0x0000u;
@@ -268,88 +269,88 @@ struct Il2CppArray {
 
 #if defined(DO_API)
 
-DO_API(int,  il2cpp_init,                          (const char* domain_name))
-DO_API(int,  il2cpp_init_utf16,                    (const Il2CppChar* domain_name))
-DO_API(void, il2cpp_shutdown,                      ())
-DO_API(void, il2cpp_set_config_dir,                (const char *configPath))
-DO_API(void, il2cpp_set_data_dir,                  (const char *dataPath))
-DO_API(void, il2cpp_set_temp_dir,                  (const char *tempPath))
-DO_API(void, il2cpp_set_commandline_arguments,     (int argc, const char* const argv[], const char* basedir))
+DO_API(int,  il2cpp_init,                            (const char* domain_name))
+DO_API(int,  il2cpp_init_utf16,                      (const Il2CppChar* domain_name))
+DO_API(void, il2cpp_shutdown,                        ())
+DO_API(void, il2cpp_set_config_dir,                  (const char* configPath))
+DO_API(void, il2cpp_set_data_dir,                    (const char* dataPath))
+DO_API(void, il2cpp_set_temp_dir,                    (const char* tempPath))
+DO_API(void, il2cpp_set_commandline_arguments,       (int argc, const char* const argv[], const char* basedir))
 DO_API(void, il2cpp_set_commandline_arguments_utf16, (int argc, const Il2CppChar* const argv[], const char* basedir))
-DO_API(void, il2cpp_set_config_utf16,              (const Il2CppChar * executablePath))
-DO_API(void, il2cpp_set_config,                    (const char* executablePath))
-DO_API(void, il2cpp_set_memory_callbacks,          (Il2CppMemoryCallbacks *callbacks))
-DO_API(const Il2CppImage*, il2cpp_get_corlib,      ())
-DO_API(void, il2cpp_add_internal_call,             (const char* name, Il2CppMethodPointer method))
-DO_API(Il2CppMethodPointer, il2cpp_resolve_icall,  (const char* name))
-DO_API(void*, il2cpp_alloc,                        (size_t size))
-DO_API(void,  il2cpp_free,                         (void* ptr))
-DO_API(Il2CppClass*, il2cpp_array_class_get,       (Il2CppClass* element_class, uint32_t rank))
-DO_API(uint32_t,     il2cpp_array_length,          (Il2CppArray* array))
-DO_API(uint32_t,     il2cpp_array_get_byte_length, (Il2CppArray* array))
-DO_API(Il2CppArray*, il2cpp_array_new,             (Il2CppClass* elementTypeInfo, il2cpp_array_size_t length))
-DO_API(Il2CppArray*, il2cpp_array_new_specific,    (Il2CppClass* arrayTypeInfo, il2cpp_array_size_t length))
-DO_API(Il2CppArray*, il2cpp_array_new_full,        (Il2CppClass* array_class, il2cpp_array_size_t *lengths, il2cpp_array_size_t *lower_bounds))
-DO_API(Il2CppClass*, il2cpp_bounded_array_class_get, (Il2CppClass* element_class, uint32_t rank, bool bounded))
-DO_API(int,          il2cpp_array_element_size,    (const Il2CppClass* array_class))
-DO_API(const Il2CppImage*, il2cpp_assembly_get_image, (const Il2CppAssembly* assembly))
-DO_API(Il2CppClass*, il2cpp_class_enum_basetype,   (Il2CppClass* klass))
-DO_API(bool,         il2cpp_class_is_generic,      (const Il2CppClass* klass))
-DO_API(bool,         il2cpp_class_is_inflated,     (const Il2CppClass* klass))
-DO_API(bool,         il2cpp_class_is_assignable_from, (Il2CppClass* klass, Il2CppClass* oklass))
-DO_API(bool,         il2cpp_class_is_subclass_of,  (Il2CppClass* klass, Il2CppClass* klassc, bool check_interfaces))
-DO_API(bool,         il2cpp_class_has_parent,      (Il2CppClass* klass, Il2CppClass* klassc))
-DO_API(Il2CppClass*, il2cpp_class_from_il2cpp_type,(const Il2CppType* type))
-DO_API(Il2CppClass*, il2cpp_class_from_name,       (const Il2CppImage* image, const char* namespaze, const char *name))
-DO_API(Il2CppClass*, il2cpp_class_from_system_type,(Il2CppReflectionType *type))
-DO_API(Il2CppClass*, il2cpp_class_get_element_class, (Il2CppClass* klass))
-DO_API(const EventInfo*, il2cpp_class_get_events,  (Il2CppClass* klass, void* *iter))
-DO_API(FieldInfo*,   il2cpp_class_get_fields,      (Il2CppClass* klass, void* *iter))
-DO_API(Il2CppClass*, il2cpp_class_get_nested_types,(Il2CppClass* klass, void* *iter))
-DO_API(Il2CppClass*, il2cpp_class_get_interfaces,  (Il2CppClass* klass, void* *iter))
-DO_API(const PropertyInfo*, il2cpp_class_get_properties, (Il2CppClass* klass, void* *iter))
-DO_API(const PropertyInfo*, il2cpp_class_get_property_from_name, (Il2CppClass* klass, const char *name))
-DO_API(FieldInfo*,   il2cpp_class_get_field_from_name, (Il2CppClass* klass, const char *name))
-DO_API(const MethodInfo*, il2cpp_class_get_methods,(Il2CppClass* klass, void* *iter))
-DO_API(const MethodInfo*, il2cpp_class_get_method_from_name, (const Il2CppClass* klass, const char* name, int argsCount))
-DO_API(const char*,  il2cpp_class_get_name,        (Il2CppClass* klass))
-DO_API(void,         il2cpp_type_get_name_chunked,  (const Il2CppType* type, void(*chunkedName)(const char* name, void* userData), void* userData))
-DO_API(const char*,  il2cpp_class_get_namespace,   (Il2CppClass* klass))
-DO_API(Il2CppClass*, il2cpp_class_get_parent,      (Il2CppClass* klass))
-DO_API(Il2CppClass*, il2cpp_class_get_declaring_type, (Il2CppClass* klass))
-DO_API(int,          il2cpp_class_get_rank,        (Il2CppClass* klass))
-DO_API(uint32_t,     il2cpp_class_get_flags,       (const Il2CppClass* klass))
-DO_API(bool,         il2cpp_class_is_valuetype,    (const Il2CppClass* klass))
-DO_API(bool,         il2cpp_class_is_enum,         (const Il2CppClass* klass))
-DO_API(bool,         il2cpp_class_is_abstract,     (const Il2CppClass* klass))
-DO_API(bool,         il2cpp_class_is_interface,    (const Il2CppClass* klass))
-DO_API(const char*,  il2cpp_class_get_image_name,  (const Il2CppClass* klass))
-DO_API(size_t,       il2cpp_image_get_class_count, (const Il2CppImage* image))
-DO_API(Il2CppClass*, il2cpp_image_get_class,       (const Il2CppImage* image, size_t index))
-DO_API(const char*,  il2cpp_image_get_name,        (const Il2CppImage* image))
-DO_API(Il2CppDomain*, il2cpp_domain_get,           ())
-DO_API(const Il2CppAssembly**, il2cpp_domain_get_assemblies, (const Il2CppDomain* domain, size_t* size))
-DO_API(Il2CppThread*, il2cpp_thread_attach,        (Il2CppDomain* domain))
-DO_API(bool,          il2cpp_is_vm_thread,         (Il2CppThread* thread))
-DO_API(Il2CppString*, il2cpp_string_new,           (const char* str))
-DO_API(const Il2CppType*, il2cpp_class_get_type,   (Il2CppClass* klass))
-DO_API(Il2CppClass*, il2cpp_class_from_type,       (const Il2CppType* type))
-DO_API(bool,         il2cpp_type_is_byref,         (const Il2CppType* type))
-DO_API(const char*,  il2cpp_field_get_name,        (FieldInfo* field))
-DO_API(uint32_t,     il2cpp_field_get_flags,       (FieldInfo* field))
-DO_API(size_t,       il2cpp_field_get_offset,      (FieldInfo* field))
-DO_API(const Il2CppType*, il2cpp_field_get_type,   (FieldInfo* field))
-DO_API(void,         il2cpp_field_static_get_value,(FieldInfo* field, void* value))
-DO_API(const char*,  il2cpp_property_get_name,     (PropertyInfo* prop))
-DO_API(uint32_t,     il2cpp_property_get_flags,    (PropertyInfo* prop))
-DO_API(const MethodInfo*, il2cpp_property_get_get_method, (PropertyInfo* prop))
-DO_API(const MethodInfo*, il2cpp_property_get_set_method, (PropertyInfo* prop))
-DO_API(const char*,  il2cpp_method_get_name,       (const MethodInfo* method))
-DO_API(uint32_t,     il2cpp_method_get_flags,      (const MethodInfo* method, uint32_t* iflags))
-DO_API(uint32_t,     il2cpp_method_get_param_count,(const MethodInfo* method))
-DO_API(const Il2CppType*, il2cpp_method_get_param, (const MethodInfo* method, uint32_t index))
-DO_API(const Il2CppType*, il2cpp_method_get_return_type, (const MethodInfo* method))
-DO_API(const char*,  il2cpp_method_get_param_name, (const MethodInfo* method, uint32_t index))
+DO_API(void, il2cpp_set_config_utf16,                (const Il2CppChar* executablePath))
+DO_API(void, il2cpp_set_config,                      (const char* executablePath))
+DO_API(void, il2cpp_set_memory_callbacks,            (Il2CppMemoryCallbacks* callbacks))
+DO_API(const Il2CppImage*,     il2cpp_get_corlib,                    ())
+DO_API(void,                   il2cpp_add_internal_call,             (const char* name, Il2CppMethodPointer method))
+DO_API(Il2CppMethodPointer,    il2cpp_resolve_icall,                 (const char* name))
+DO_API(void*,                  il2cpp_alloc,                         (size_t size))
+DO_API(void,                   il2cpp_free,                          (void* ptr))
+DO_API(Il2CppClass*,           il2cpp_array_class_get,               (Il2CppClass* element_class, uint32_t rank))
+DO_API(uint32_t,               il2cpp_array_length,                  (Il2CppArray* array))
+DO_API(uint32_t,               il2cpp_array_get_byte_length,         (Il2CppArray* array))
+DO_API(Il2CppArray*,           il2cpp_array_new,                     (Il2CppClass* elementTypeInfo, il2cpp_array_size_t length))
+DO_API(Il2CppArray*,           il2cpp_array_new_specific,            (Il2CppClass* arrayTypeInfo, il2cpp_array_size_t length))
+DO_API(Il2CppArray*,           il2cpp_array_new_full,                (Il2CppClass* array_class, il2cpp_array_size_t* lengths, il2cpp_array_size_t* lower_bounds))
+DO_API(Il2CppClass*,           il2cpp_bounded_array_class_get,       (Il2CppClass* element_class, uint32_t rank, bool bounded))
+DO_API(int,                    il2cpp_array_element_size,            (const Il2CppClass* array_class))
+DO_API(const Il2CppImage*,     il2cpp_assembly_get_image,            (const Il2CppAssembly* assembly))
+DO_API(Il2CppClass*,           il2cpp_class_enum_basetype,           (Il2CppClass* klass))
+DO_API(bool,                   il2cpp_class_is_generic,              (const Il2CppClass* klass))
+DO_API(bool,                   il2cpp_class_is_inflated,             (const Il2CppClass* klass))
+DO_API(bool,                   il2cpp_class_is_assignable_from,      (Il2CppClass* klass, Il2CppClass* oklass))
+DO_API(bool,                   il2cpp_class_is_subclass_of,          (Il2CppClass* klass, Il2CppClass* klassc, bool check_interfaces))
+DO_API(bool,                   il2cpp_class_has_parent,              (Il2CppClass* klass, Il2CppClass* klassc))
+DO_API(Il2CppClass*,           il2cpp_class_from_il2cpp_type,        (const Il2CppType* type))
+DO_API(Il2CppClass*,           il2cpp_class_from_name,               (const Il2CppImage* image, const char* namespaze, const char* name))
+DO_API(Il2CppClass*,           il2cpp_class_from_system_type,        (Il2CppReflectionType* type))
+DO_API(Il2CppClass*,           il2cpp_class_get_element_class,       (Il2CppClass* klass))
+DO_API(const EventInfo*,       il2cpp_class_get_events,              (Il2CppClass* klass, void** iter))
+DO_API(FieldInfo*,             il2cpp_class_get_fields,              (Il2CppClass* klass, void** iter))
+DO_API(Il2CppClass*,           il2cpp_class_get_nested_types,        (Il2CppClass* klass, void** iter))
+DO_API(Il2CppClass*,           il2cpp_class_get_interfaces,          (Il2CppClass* klass, void** iter))
+DO_API(const PropertyInfo*,    il2cpp_class_get_properties,          (Il2CppClass* klass, void** iter))
+DO_API(const PropertyInfo*,    il2cpp_class_get_property_from_name,  (Il2CppClass* klass, const char* name))
+DO_API(FieldInfo*,             il2cpp_class_get_field_from_name,     (Il2CppClass* klass, const char* name))
+DO_API(const MethodInfo*,      il2cpp_class_get_methods,             (Il2CppClass* klass, void** iter))
+DO_API(const MethodInfo*,      il2cpp_class_get_method_from_name,    (const Il2CppClass* klass, const char* name, int argsCount))
+DO_API(const char*,            il2cpp_class_get_name,                (Il2CppClass* klass))
+DO_API(void,                   il2cpp_type_get_name_chunked,         (const Il2CppType* type, void(*chunkedName)(const char* name, void* userData), void* userData))
+DO_API(const char*,            il2cpp_class_get_namespace,           (Il2CppClass* klass))
+DO_API(Il2CppClass*,           il2cpp_class_get_parent,              (Il2CppClass* klass))
+DO_API(Il2CppClass*,           il2cpp_class_get_declaring_type,      (Il2CppClass* klass))
+DO_API(int,                    il2cpp_class_get_rank,                (Il2CppClass* klass))
+DO_API(uint32_t,               il2cpp_class_get_flags,               (const Il2CppClass* klass))
+DO_API(bool,                   il2cpp_class_is_valuetype,            (const Il2CppClass* klass))
+DO_API(bool,                   il2cpp_class_is_enum,                 (const Il2CppClass* klass))
+DO_API(bool,                   il2cpp_class_is_abstract,             (const Il2CppClass* klass))
+DO_API(bool,                   il2cpp_class_is_interface,            (const Il2CppClass* klass))
+DO_API(const char*,            il2cpp_class_get_image_name,          (const Il2CppClass* klass))
+DO_API(size_t,                 il2cpp_image_get_class_count,         (const Il2CppImage* image))
+DO_API(Il2CppClass*,           il2cpp_image_get_class,               (const Il2CppImage* image, size_t index))
+DO_API(const char*,            il2cpp_image_get_name,                (const Il2CppImage* image))
+DO_API(Il2CppDomain*,          il2cpp_domain_get,                    ())
+DO_API(const Il2CppAssembly**, il2cpp_domain_get_assemblies,         (const Il2CppDomain* domain, size_t* size))
+DO_API(Il2CppThread*,          il2cpp_thread_attach,                 (Il2CppDomain* domain))
+DO_API(bool,                   il2cpp_is_vm_thread,                  (Il2CppThread* thread))
+DO_API(Il2CppString*,          il2cpp_string_new,                    (const char* str))
+DO_API(const Il2CppType*,      il2cpp_class_get_type,                (Il2CppClass* klass))
+DO_API(Il2CppClass*,           il2cpp_class_from_type,               (const Il2CppType* type))
+DO_API(bool,                   il2cpp_type_is_byref,                 (const Il2CppType* type))
+DO_API(const char*,            il2cpp_field_get_name,                (FieldInfo* field))
+DO_API(uint32_t,               il2cpp_field_get_flags,               (FieldInfo* field))
+DO_API(size_t,                 il2cpp_field_get_offset,              (FieldInfo* field))
+DO_API(const Il2CppType*,      il2cpp_field_get_type,                (FieldInfo* field))
+DO_API(void,                   il2cpp_field_static_get_value,        (FieldInfo* field, void* value))
+DO_API(const char*,            il2cpp_property_get_name,             (PropertyInfo* prop))
+DO_API(uint32_t,               il2cpp_property_get_flags,            (PropertyInfo* prop))
+DO_API(const MethodInfo*,      il2cpp_property_get_get_method,       (PropertyInfo* prop))
+DO_API(const MethodInfo*,      il2cpp_property_get_set_method,       (PropertyInfo* prop))
+DO_API(const char*,            il2cpp_method_get_name,               (const MethodInfo* method))
+DO_API(uint32_t,               il2cpp_method_get_flags,              (const MethodInfo* method, uint32_t* iflags))
+DO_API(uint32_t,               il2cpp_method_get_param_count,        (const MethodInfo* method))
+DO_API(const Il2CppType*,      il2cpp_method_get_param,              (const MethodInfo* method, uint32_t index))
+DO_API(const Il2CppType*,      il2cpp_method_get_return_type,        (const MethodInfo* method))
+DO_API(const char*,            il2cpp_method_get_param_name,         (const MethodInfo* method, uint32_t index))
 
 #endif
 
@@ -421,21 +422,21 @@ struct XorKeyResult {
     for (size_t key_len : {4u, 8u, 16u, 32u}) {
         if (sz < key_len * 4) continue;
         std::vector<uint8_t> candidate(key_len);
-        uint32_t target = kIl2CppMetadataMagic;
+        const uint32_t target = kIl2CppMetadataMagic;
 
         for (size_t i = 0; i < 4 && i < key_len; ++i)
             candidate[i] = buf[i] ^ static_cast<uint8_t>((target >> (i * 8)) & 0xFFu);
 
         bool valid = true;
         for (size_t i = key_len; i < std::min(sz, key_len * 4); ++i) {
-            if ((buf[i] ^ candidate[i % key_len]) != 0x00) { valid = false; break; }
+            if ((buf[i] ^ candidate[i % key_len]) != 0x00u) { valid = false; break; }
         }
         if (!valid) continue;
 
         int score = 0;
-        for (size_t j = 4; j < std::min(sz, size_t(256)); ++j) {
+        for (size_t j = 4; j < std::min(sz, size_t{256}); ++j) {
             uint8_t decoded = buf[j] ^ candidate[j % key_len];
-            if (decoded >= 0x20 && decoded <= 0x7E) ++score;
+            if (decoded >= 0x20u && decoded <= 0x7Eu) ++score;
         }
         if (score > result.score) {
             result.key     = candidate;
@@ -457,6 +458,55 @@ struct XorKeyResult {
 }
 
 } // namespace entropy
+
+namespace async_io {
+
+struct AsyncWriter {
+    int                  fd_  = -1;
+    std::vector<uint8_t> buf_;
+    static constexpr size_t kFlushThreshold = 512u * 1024u;
+
+    [[nodiscard]] bool open(const std::string& path) noexcept {
+        fd_ = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        return fd_ >= 0;
+    }
+
+    void write(std::string_view sv) {
+        buf_.insert(buf_.end(),
+                    reinterpret_cast<const uint8_t*>(sv.data()),
+                    reinterpret_cast<const uint8_t*>(sv.data()) + sv.size());
+        if (buf_.size() >= kFlushThreshold) flush();
+    }
+
+    void flush() noexcept {
+        if (fd_ < 0 || buf_.empty()) return;
+        const uint8_t* ptr  = buf_.data();
+        size_t         left = buf_.size();
+        while (left > 0) {
+            ssize_t w = ::write(fd_, ptr, left);
+            if (w <= 0) break;
+            ptr  += static_cast<size_t>(w);
+            left -= static_cast<size_t>(w);
+        }
+        buf_.clear();
+        fdatasync(fd_);
+    }
+
+    void close() noexcept {
+        flush();
+        if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
+    }
+
+    ~AsyncWriter() { close(); }
+
+    AsyncWriter()                              = default;
+    AsyncWriter(const AsyncWriter&)            = delete;
+    AsyncWriter& operator=(const AsyncWriter&) = delete;
+    AsyncWriter(AsyncWriter&&)                 = delete;
+    AsyncWriter& operator=(AsyncWriter&&)      = delete;
+};
+
+} // namespace async_io
 
 namespace scanner {
 
@@ -494,34 +544,34 @@ namespace known_hashes {
 }
 
 namespace arm64_prologue {
-    inline constexpr std::array<uint8_t, 8> kDomainGet               = {0xE0,0x03,0x00,0xAA,0xC0,0x03,0x5F,0xD6};
-    inline constexpr std::array<uint8_t, 8> kDomainGet2026           = {0x08,0x00,0x40,0xF9,0xE0,0x03,0x08,0xAA};
-    inline constexpr std::array<uint8_t, 8> kDomainGetAssemblies     = {0xE8,0x03,0x00,0xF9,0xE9,0x03,0x01,0xF9};
-    inline constexpr std::array<uint8_t, 8> kDomainGetAssemblies2024 = {0x08,0x00,0x40,0xF9,0xE8,0x03,0x01,0xF9};
-    inline constexpr std::array<uint8_t, 8> kImageGetClass           = {0xE8,0x03,0x01,0xF9,0xE9,0x03,0x00,0xF9};
-    inline constexpr std::array<uint8_t, 8> kImageGetClass2026       = {0x08,0x10,0x40,0xF9,0x28,0x00,0x40,0xF9};
-    inline constexpr std::array<uint8_t, 8> kThreadAttach            = {0xE8,0x03,0x40,0xF9,0x08,0x01,0x40,0xF9};
-    inline constexpr std::array<uint8_t, 8> kIsVmThread              = {0x08,0x00,0x40,0xF9,0x08,0x01,0x40,0xB9};
-    inline constexpr std::array<uint8_t, 8> kMetadataLoader          = {0xFD,0x7B,0xBF,0xA9,0xFD,0x03,0x00,0x91};
-    inline constexpr std::array<uint8_t, 8> kMetadataCacheInitialize64={0xFD,0x7B,0xBF,0xA9,0xF3,0x0F,0x1F,0xF8};
-    inline constexpr std::array<uint8_t, 8> kMetadataDecrypt         = {0xFD,0x7B,0xBF,0xA9,0xF3,0x53,0xBF,0xA9};
-    inline constexpr std::array<uint8_t, 8> kIl2cppInit2026          = {0xFD,0x7B,0xBF,0xA9,0xF4,0x4F,0xBF,0xA9};
+    inline constexpr std::array<uint8_t, 8> kDomainGet                = {0xE0,0x03,0x00,0xAA,0xC0,0x03,0x5F,0xD6};
+    inline constexpr std::array<uint8_t, 8> kDomainGet2026            = {0x08,0x00,0x40,0xF9,0xE0,0x03,0x08,0xAA};
+    inline constexpr std::array<uint8_t, 8> kDomainGetAssemblies      = {0xE8,0x03,0x00,0xF9,0xE9,0x03,0x01,0xF9};
+    inline constexpr std::array<uint8_t, 8> kDomainGetAssemblies2024  = {0x08,0x00,0x40,0xF9,0xE8,0x03,0x01,0xF9};
+    inline constexpr std::array<uint8_t, 8> kImageGetClass            = {0xE8,0x03,0x01,0xF9,0xE9,0x03,0x00,0xF9};
+    inline constexpr std::array<uint8_t, 8> kImageGetClass2026        = {0x08,0x10,0x40,0xF9,0x28,0x00,0x40,0xF9};
+    inline constexpr std::array<uint8_t, 8> kThreadAttach             = {0xE8,0x03,0x40,0xF9,0x08,0x01,0x40,0xF9};
+    inline constexpr std::array<uint8_t, 8> kIsVmThread               = {0x08,0x00,0x40,0xF9,0x08,0x01,0x40,0xB9};
+    inline constexpr std::array<uint8_t, 8> kMetadataLoader           = {0xFD,0x7B,0xBF,0xA9,0xFD,0x03,0x00,0x91};
+    inline constexpr std::array<uint8_t, 8> kMetadataCacheInitialize64= {0xFD,0x7B,0xBF,0xA9,0xF3,0x0F,0x1F,0xF8};
+    inline constexpr std::array<uint8_t, 8> kMetadataDecrypt          = {0xFD,0x7B,0xBF,0xA9,0xF3,0x53,0xBF,0xA9};
+    inline constexpr std::array<uint8_t, 8> kIl2cppInit2026           = {0xFD,0x7B,0xBF,0xA9,0xF4,0x4F,0xBF,0xA9};
 }
 
 #if defined(__arm__)
 namespace arm32_prologue {
-    inline constexpr std::array<uint8_t, 8> kMetadataLoader32         = {0x2D,0xE9,0xF0,0x47,0x00,0x20,0x90,0xE5};
-    inline constexpr std::array<uint8_t, 8> kMetadataCacheInitialize32= {0x2D,0xE9,0xF8,0x4F,0x05,0x46,0x16,0x46};
-    inline constexpr std::array<uint8_t, 8> kDomainGet32              = {0x10,0xB5,0x04,0x46,0x00,0x20,0x90,0xE5};
-    inline constexpr std::array<uint8_t, 8> kDomainGetAssemblies32    = {0x2D,0xE9,0xF0,0x41,0x00,0x24,0x90,0xE5};
-    inline constexpr std::array<uint8_t, 8> kImageGetClass32          = {0x10,0xB5,0x01,0x24,0x90,0xE5,0x1C,0x00};
-    inline constexpr std::array<uint8_t, 8> kThreadAttach32           = {0x2D,0xE9,0x10,0x40,0x01,0x20,0x90,0xE5};
+    inline constexpr std::array<uint8_t, 8> kMetadataLoader32          = {0x2D,0xE9,0xF0,0x47,0x00,0x20,0x90,0xE5};
+    inline constexpr std::array<uint8_t, 8> kMetadataCacheInitialize32 = {0x2D,0xE9,0xF8,0x4F,0x05,0x46,0x16,0x46};
+    inline constexpr std::array<uint8_t, 8> kDomainGet32               = {0x10,0xB5,0x04,0x46,0x00,0x20,0x90,0xE5};
+    inline constexpr std::array<uint8_t, 8> kDomainGetAssemblies32     = {0x2D,0xE9,0xF0,0x41,0x00,0x24,0x90,0xE5};
+    inline constexpr std::array<uint8_t, 8> kImageGetClass32           = {0x10,0xB5,0x01,0x24,0x90,0xE5,0x1C,0x00};
+    inline constexpr std::array<uint8_t, 8> kThreadAttach32            = {0x2D,0xE9,0x10,0x40,0x01,0x20,0x90,0xE5};
 }
 #endif
 
 template<size_t N>
 [[nodiscard]] static std::optional<uintptr_t> scanPattern(
-    const MemoryRegion& region, const std::array<uint8_t, N>& pattern, size_t align = 4) noexcept
+    const MemoryRegion& region, const std::array<uint8_t, N>& pattern, size_t align = 4u) noexcept
 {
     const auto* base = reinterpret_cast<const uint8_t*>(region.base);
     for (size_t i = 0; i + N <= region.size; i += align) {
@@ -533,10 +583,10 @@ template<size_t N>
 
 template<size_t N>
 [[nodiscard]] static std::optional<uintptr_t> scanPatternFuzzy(
-    const MemoryRegion& region, const std::array<uint8_t, N>& pattern, size_t align = 4) noexcept
+    const MemoryRegion& region, const std::array<uint8_t, N>& pattern, size_t align = 4u) noexcept
 {
-    const auto* base = reinterpret_cast<const uint8_t*>(region.base);
-    constexpr size_t half = N / 2;
+    const auto* base     = reinterpret_cast<const uint8_t*>(region.base);
+    constexpr size_t half = N / 2u;
     for (size_t i = 0; i + N <= region.size; i += align) {
         if (__builtin_memcmp(base + i, pattern.data(), half) == 0)
             return region.base + i;
@@ -548,7 +598,7 @@ template<size_t N>
     const MemoryRegion& region, std::span<const uint32_t> hashes) noexcept
 {
     const auto* base  = reinterpret_cast<const uint32_t*>(region.base);
-    size_t      count = region.size / sizeof(uint32_t);
+    const size_t count = region.size / sizeof(uint32_t);
     for (size_t i = 0; i < count; ++i) {
         for (auto h : hashes) {
             if (base[i] == h) return region.base + i * sizeof(uint32_t);
@@ -579,8 +629,8 @@ template<size_t N>
 
 [[nodiscard]] static bool isReadableAddress(uintptr_t address) noexcept {
     if (!address) return false;
-    auto page    = static_cast<uintptr_t>(getpagesize());
-    auto aligned = reinterpret_cast<void*>(address & ~(page - 1u));
+    const uintptr_t page    = static_cast<uintptr_t>(getpagesize());
+    void* const     aligned = reinterpret_cast<void*>(address & ~(page - 1u));
     return msync(aligned, page, MS_ASYNC) == 0;
 }
 
@@ -604,32 +654,36 @@ template<size_t N>
                               const char* name) {
         if (field) return;
         if (auto a = scanPattern(*region, pat))      { field = *a; LOGI("scanner[strict]: %s -> 0x%" PRIxPTR, name, field); return; }
-        if (auto a = scanPatternFuzzy(*region, pat)) { field = *a; LOGI("scanner[fuzzy]: %s -> 0x%" PRIxPTR, name, field);  return; }
+        if (auto a = scanPatternFuzzy(*region, pat)) { field = *a; LOGI("scanner[fuzzy]:  %s -> 0x%" PRIxPTR, name, field); return; }
         if (!hashes.empty()) {
-            if (auto a = scanByHashLattice(*region, hashes)) { field = *a; LOGI("scanner[hash]: %s -> 0x%" PRIxPTR, name, field); return; }
+            if (auto a = scanByHashLattice(*region, hashes)) {
+                field = *a;
+                LOGI("scanner[hash]:  %s -> 0x%" PRIxPTR, name, field);
+                return;
+            }
         }
         LOGW("scanner: %s not found (all strategies exhausted)", name);
     };
 
-    adaptive_scan(s.domain_get,               arm64_prologue::kDomainGet,               dg_hashes, "il2cpp_domain_get");
-    adaptive_scan(s.domain_get_assemblies,     arm64_prologue::kDomainGetAssemblies,     no_hashes, "il2cpp_domain_get_assemblies");
-    adaptive_scan(s.image_get_class,           arm64_prologue::kImageGetClass,           no_hashes, "il2cpp_image_get_class");
-    adaptive_scan(s.thread_attach,             arm64_prologue::kThreadAttach,            no_hashes, "il2cpp_thread_attach");
-    adaptive_scan(s.is_vm_thread,              arm64_prologue::kIsVmThread,              no_hashes, "il2cpp_is_vm_thread");
-    adaptive_scan(s.domain_get,                arm64_prologue::kDomainGet2026,           dg_hashes, "il2cpp_domain_get[2026]");
-    adaptive_scan(s.domain_get_assemblies,     arm64_prologue::kDomainGetAssemblies2024, no_hashes, "il2cpp_domain_get_assemblies[2024]");
-    adaptive_scan(s.image_get_class,           arm64_prologue::kImageGetClass2026,       no_hashes, "il2cpp_image_get_class[2026]");
-    adaptive_scan(s.domain_get_2026,           arm64_prologue::kDomainGet2026,           dg_hashes, "domain_get_2026");
-    adaptive_scan(s.metadata_loader,           arm64_prologue::kMetadataLoader,          ml_hashes, "metadata_loader");
+    adaptive_scan(s.domain_get,               arm64_prologue::kDomainGet,                dg_hashes, "il2cpp_domain_get");
+    adaptive_scan(s.domain_get_assemblies,     arm64_prologue::kDomainGetAssemblies,      no_hashes, "il2cpp_domain_get_assemblies");
+    adaptive_scan(s.image_get_class,           arm64_prologue::kImageGetClass,            no_hashes, "il2cpp_image_get_class");
+    adaptive_scan(s.thread_attach,             arm64_prologue::kThreadAttach,             no_hashes, "il2cpp_thread_attach");
+    adaptive_scan(s.is_vm_thread,              arm64_prologue::kIsVmThread,               no_hashes, "il2cpp_is_vm_thread");
+    adaptive_scan(s.domain_get,                arm64_prologue::kDomainGet2026,            dg_hashes, "il2cpp_domain_get[2026]");
+    adaptive_scan(s.domain_get_assemblies,     arm64_prologue::kDomainGetAssemblies2024,  no_hashes, "il2cpp_domain_get_assemblies[2024]");
+    adaptive_scan(s.image_get_class,           arm64_prologue::kImageGetClass2026,        no_hashes, "il2cpp_image_get_class[2026]");
+    adaptive_scan(s.domain_get_2026,           arm64_prologue::kDomainGet2026,            dg_hashes, "domain_get_2026");
+    adaptive_scan(s.metadata_loader,           arm64_prologue::kMetadataLoader,           ml_hashes, "metadata_loader");
     adaptive_scan(s.metadata_cache_initialize, arm64_prologue::kMetadataCacheInitialize64, ml_hashes, "metadata_cache_init[64]");
-    adaptive_scan(s.metadata_decrypt,          arm64_prologue::kMetadataDecrypt,         no_hashes, "metadata_decrypt");
-    adaptive_scan(s.il2cpp_init_2026,          arm64_prologue::kIl2cppInit2026,          no_hashes, "il2cpp_init[2026]");
+    adaptive_scan(s.metadata_decrypt,          arm64_prologue::kMetadataDecrypt,          no_hashes, "metadata_decrypt");
+    adaptive_scan(s.il2cpp_init_2026,          arm64_prologue::kIl2cppInit2026,           no_hashes, "il2cpp_init[2026]");
 
 #if defined(__arm__)
     auto scan32 = [&](auto& field, const auto& pat, const char* name) {
         if (field) return;
-        if (auto a = scanPattern(*region, pat, 2))      { field = *a | 1u; LOGI("scanner[arm32/strict]: %s -> 0x%" PRIxPTR, name, field); return; }
-        if (auto a = scanPatternFuzzy(*region, pat, 2)) { field = *a | 1u; LOGI("scanner[arm32/fuzzy]: %s -> 0x%" PRIxPTR, name, field);  return; }
+        if (auto a = scanPattern(*region, pat, 2u))      { field = *a | 1u; LOGI("scanner[arm32/strict]: %s -> 0x%" PRIxPTR, name, field); return; }
+        if (auto a = scanPatternFuzzy(*region, pat, 2u)) { field = *a | 1u; LOGI("scanner[arm32/fuzzy]:  %s -> 0x%" PRIxPTR, name, field); return; }
         LOGW("scanner[arm32]: %s not found", name);
     };
     scan32(s.arm32_metadata_loader,       arm32_prologue::kMetadataLoader32,          "metadata_loader[arm32]");
@@ -656,7 +710,7 @@ static int dl_iterate_phdr_callback(struct dl_phdr_info* info, size_t, void* dat
     return base;
 }
 
-static void sigsegv_handler(int sig, siginfo_t* info, void* ucontext) {
+static void sigsegv_handler(int sig, siginfo_t* info, void* ucontext) noexcept {
     (void)ucontext;
     LOGE("SIGSEGV caught sig=%d addr=%p", sig, info ? info->si_addr : nullptr);
     struct sigaction sa{};
@@ -695,12 +749,12 @@ struct DumperConfig {
 [[nodiscard]] static std::optional<std::string> extractJsonString(
     const std::string& json, std::string_view key)
 {
-    std::string needle = std::string("\"").append(key).append("\"");
-    size_t kp = json.find(needle);
+    const std::string needle = std::string("\"").append(key).append("\"");
+    const size_t kp = json.find(needle);
     if (kp == std::string::npos) return std::nullopt;
-    size_t cp = json.find(':', kp + needle.size());
+    const size_t cp = json.find(':', kp + needle.size());
     if (cp == std::string::npos) return std::nullopt;
-    size_t vs = json.find_first_not_of(" \t\r\n", cp + 1);
+    const size_t vs = json.find_first_not_of(" \t\r\n", cp + 1);
     if (vs == std::string::npos || json[vs] != '"') return std::nullopt;
 
     std::string result;
@@ -718,7 +772,9 @@ struct DumperConfig {
                 case 't':  result += '\t'; break;
                 default:   result += json[i]; break;
             }
-        } else { result += json[i]; }
+        } else {
+            result += json[i];
+        }
         ++i;
     }
     return result;
@@ -727,12 +783,12 @@ struct DumperConfig {
 [[nodiscard]] static bool extractJsonBool(
     const std::string& json, std::string_view key, bool def)
 {
-    std::string needle = std::string("\"").append(key).append("\"");
-    size_t kp = json.find(needle);
+    const std::string needle = std::string("\"").append(key).append("\"");
+    const size_t kp = json.find(needle);
     if (kp == std::string::npos) return def;
-    size_t cp = json.find(':', kp + needle.size());
+    const size_t cp = json.find(':', kp + needle.size());
     if (cp == std::string::npos) return def;
-    size_t vs = json.find_first_not_of(" \t\r\n", cp + 1);
+    const size_t vs = json.find_first_not_of(" \t\r\n", cp + 1);
     if (vs == std::string::npos) return def;
     if (json.compare(vs, 4, "true")  == 0) return true;
     if (json.compare(vs, 5, "false") == 0) return false;
@@ -759,8 +815,9 @@ struct DumperConfig {
     for (auto path : paths) {
         std::ifstream file(path.data());
         if (!file.is_open()) continue;
-        std::ostringstream buf; buf << file.rdbuf();
-        auto json = buf.str();
+        std::ostringstream buf;
+        buf << file.rdbuf();
+        const auto json = buf.str();
         if (json.empty()) continue;
         auto cfg = parseJsonConfig(json);
         LOGI("config: loaded %s  Target_Game=%s  Output=%s  64bit=%d",
@@ -781,7 +838,7 @@ struct DumperConfig {
     return cfg.Target_Game == "!";
 }
 
-[[nodiscard]] static bool isTargetPackage(const DumperConfig& cfg, std::string_view pkg) {
+[[nodiscard]] static bool isTargetPackage(const DumperConfig& cfg, std::string_view pkg) noexcept {
     if (isWildcardTarget(cfg)) return true;
     return isExplicitTarget(cfg) && cfg.Target_Game == pkg;
 }
@@ -790,12 +847,16 @@ using HotReloadCallback = std::function<void(const DumperConfig&)>;
 
 class ConfigWatcher {
 public:
+    ConfigWatcher()                              = default;
+    ConfigWatcher(const ConfigWatcher&)          = delete;
+    ConfigWatcher& operator=(const ConfigWatcher&) = delete;
+
     bool start(HotReloadCallback cb) {
         cb_  = std::move(cb);
         ifd_ = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
         if (ifd_ < 0) { LOGE("inotify_init1 failed errno=%d", errno); return false; }
 
-        efd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+        efd_ = eventfd(0u, EFD_CLOEXEC | EFD_NONBLOCK);
         if (efd_ < 0) {
             LOGE("eventfd failed errno=%d", errno);
             ::close(ifd_);
@@ -809,10 +870,10 @@ public:
         bool any_watch = false;
         for (auto p : paths) {
             std::string dir(p);
-            auto slash = dir.rfind('/');
+            const auto slash = dir.rfind('/');
             if (slash != std::string::npos) dir.resize(slash);
-            int wd = inotify_add_watch(ifd_, dir.c_str(),
-                                       IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE);
+            const int wd = inotify_add_watch(ifd_, dir.c_str(),
+                                             IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE);
             if (wd >= 0) {
                 any_watch = true;
                 LOGI("inotify: watching %s (wd=%d)", dir.c_str(), wd);
@@ -820,9 +881,7 @@ public:
                 LOGW("inotify: watch failed for %s errno=%d", dir.c_str(), errno);
             }
         }
-        if (!any_watch) {
-            LOGW("inotify: no directories watchable -- hot-reload disabled");
-        }
+        if (!any_watch) LOGW("inotify: no directories watchable -- hot-reload disabled");
 
         running_.store(true, std::memory_order_release);
         thread_ = std::thread([this]() { watchLoop(); });
@@ -832,8 +891,8 @@ public:
     void stop() {
         running_.store(false, std::memory_order_release);
         if (efd_ >= 0) {
-            uint64_t v = 1;
-            (void)write(efd_, &v, 8);
+            const uint64_t v = 1u;
+            (void)::write(efd_, &v, sizeof(v));
         }
         if (thread_.joinable()) thread_.join();
         if (ifd_ >= 0) { ::close(ifd_); ifd_ = -1; }
@@ -844,40 +903,40 @@ public:
 
 private:
     HotReloadCallback cb_;
-    int               ifd_    = -1;
-    int               efd_    = -1;
-    std::atomic<bool> running_{false};
+    int               ifd_     = -1;
+    int               efd_     = -1;
+    std::atomic<bool> running_ {false};
     std::thread       thread_;
 
     void watchLoop() {
-        constexpr size_t kBufSz = sizeof(inotify_event) + NAME_MAX + 1;
-        alignas(inotify_event) char buf[kBufSz * 4];
+        constexpr size_t kBufSz = sizeof(inotify_event) + NAME_MAX + 1u;
+        alignas(inotify_event) char buf[kBufSz * 4u];
 
         struct pollfd fds[2];
         fds[0] = { ifd_, POLLIN, 0 };
         fds[1] = { efd_, POLLIN, 0 };
 
         while (running_.load(std::memory_order_acquire)) {
-            int ret = poll(fds, 2, -1);
+            const int ret = poll(fds, 2, -1);
             if (ret <= 0) continue;
             if (fds[1].revents & POLLIN) break;
             if (!(fds[0].revents & POLLIN)) continue;
 
-            ssize_t len = read(ifd_, buf, sizeof(buf));
+            const ssize_t len = read(ifd_, buf, sizeof(buf));
             if (len <= 0) continue;
 
             bool reload = false;
             for (char* ptr = buf; ptr < buf + len; ) {
                 auto* ev = reinterpret_cast<inotify_event*>(ptr);
                 ptr += sizeof(inotify_event) + ev->len;
-                if (ev->len == 0) { reload = true; continue; }
+                if (ev->len == 0u) { reload = true; continue; }
                 if (strcmp(ev->name, "Eaquel_Config.json") == 0) reload = true;
             }
 
             if (reload) {
                 struct pollfd settle_pf = { ifd_, POLLIN, 0 };
                 poll(&settle_pf, 1, 80);
-                auto cfg = loadConfig();
+                const auto cfg = loadConfig();
                 LOGI("config: hot-reload triggered -- Target_Game=%s Protected_Breaker=%d Output=%s",
                      cfg.Target_Game.c_str(), static_cast<int>(cfg.Protected_Breaker), cfg.Output.c_str());
                 if (cb_) cb_(cfg);
