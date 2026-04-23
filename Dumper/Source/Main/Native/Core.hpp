@@ -691,18 +691,22 @@ template<size_t N>
     return s;
 }
 
-static int dl_iterate_phdr_callback(struct dl_phdr_info* info, size_t, void* data) {
-    if (info->dlpi_name && strstr(info->dlpi_name, "libil2cpp.so")) {
-        *reinterpret_cast<uintptr_t*>(data) = static_cast<uintptr_t>(info->dlpi_addr);
-        return 1;
-    }
-    return 0;
-}
-
-[[nodiscard]] static uintptr_t findLibBase(const char*) noexcept {
-    uintptr_t base = 0;
-    dl_iterate_phdr(dl_iterate_phdr_callback, &base);
-    return base;
+// FIX Bug#4: Eski dl_iterate_phdr_callback hardcoded "libil2cpp.so" arıyordu
+// ve findLibBase parametresini tamamen yok sayıyordu.
+// Artık lib_name parametresi lambda aracılığıyla callback'e iletiliyor.
+[[nodiscard]] static uintptr_t findLibBase(const char* lib_name) noexcept {
+    if (!lib_name || !*lib_name) return 0u;
+    struct SearchCtx { const char* name; uintptr_t result; };
+    SearchCtx ctx{ lib_name, 0u };
+    dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* data) -> int {
+        auto* ctx_ = reinterpret_cast<SearchCtx*>(data);
+        if (info->dlpi_name && strstr(info->dlpi_name, ctx_->name)) {
+            ctx_->result = static_cast<uintptr_t>(info->dlpi_addr);
+            return 1;
+        }
+        return 0;
+    }, &ctx);
+    return ctx.result;
 }
 
 static void sigsegv_handler(int sig, siginfo_t* info, void* ucontext) noexcept {

@@ -1074,14 +1074,18 @@ static void hackStart(
     LOGI("hackStart tid=%d  game=%s  out=%s  api=%d",
          gettid(), game_dir.c_str(), out_dir.c_str(), getAndroidApiLevel());
 
-    constexpr int     kMaxRetries = 20;
-    constexpr int64_t kMaxTotalMs = 30'000LL;
+    // FIX: Bazı oyunlar (özellikle büyük Unity/IL2CPP oyunları) libil2cpp.so'yu
+    // geç yükler. 30 saniye ve 20 deneme yetmeyebilir.
+    // Artık 60 saniye / 30 deneme yapıyoruz. Ayrıca her beklemeyi logla.
+    constexpr int     kMaxRetries = 30;
+    constexpr int64_t kMaxTotalMs = 60'000LL;
     int64_t           elapsed_ms  = 0;
 
     for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
         const uintptr_t base = scanner::findLibBase("libil2cpp.so");
         if (base) {
-            LOGI("libil2cpp.so found base=0x%" PRIxPTR " attempt=%d", base, attempt);
+            LOGI("libil2cpp.so found base=0x%" PRIxPTR " attempt=%d elapsed=%" PRId64 "ms",
+                 base, attempt, elapsed_ms);
             if (cfg.Protected_Breaker && !metadata_hook::s_fired.load())
                 metadata_hook::install(base, out_dir);
             runApiInit(base);
@@ -1092,10 +1096,12 @@ static void hackStart(
         const auto delay = exponentialDelay(attempt);
         elapsed_ms += delay;
         if (elapsed_ms >= kMaxTotalMs) {
-            LOGE("[BootGuard] TIMEOUT: libil2cpp.so not found in 30s -- stopping");
+            LOGE("[BootGuard] TIMEOUT: libil2cpp.so not found in %" PRId64 "ms -- stopping", kMaxTotalMs);
             return;
         }
-        LOGI("libil2cpp.so not ready attempt=%d delay=%" PRId64 "ms", attempt, delay);
+        // FIX: Her beklemeyi logla (sadece ilk logcat'e değil, süreç takibi için)
+        LOGI("libil2cpp.so not ready attempt=%d/%d delay=%" PRId64 "ms total_elapsed=%" PRId64 "ms",
+             attempt + 1, kMaxRetries, delay, elapsed_ms);
         stealthWait(delay);
     }
     LOGE("libil2cpp.so not found after %d attempts tid=%d", kMaxRetries, gettid());
@@ -1124,16 +1130,27 @@ static void hackPrepare(
 class EaquelDumperModule : public rezygisk::ModuleBase {
 public:
 
-    void onLoad(rezygisk::Api* api_, JNIEnv* env_) override {
-        api_ = api_;
-        env_ = env_;
-        this->api = api_;
-        this->env = env_;
+    void onLoad(rezygisk::Api* api_in, JNIEnv* env_in) override {
+        // FIX: Parametre ismi sınıf üyesiyle çakışıyordu (shadow bug).
+        // Eski kod: api_ = api_; → kendini kendine atıyor, this->api NULL kalıyordu.
+        if (!api_in) {
+            LOGE("[Module] onLoad: api pointer NULL -- module cannot function");
+            return;
+        }
+        this->api = api_in;
+        this->env = env_in;
         LOGI("[Module] onLoad: registered -- Zygote safe, waiting for preAppSpecialize");
     }
 
     void preAppSpecialize(rezygisk::AppSpecializeArgs* args) override {
+        // FIX: api pointer NULL ise hiçbir şey yapamayız, erken çık
+        if (!api) {
+            LOGE("[Module] preAppSpecialize: api is NULL (onLoad bug not fixed?) -- skip");
+            return;
+        }
+
         if (!args) {
+            LOGI("[Module] preAppSpecialize: args NULL -- unloading");
             api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
             return;
         }
@@ -1146,10 +1163,21 @@ public:
         const std::string pkg_str = raw_pkg ? raw_pkg : "";
         const std::string dir_str = raw_dir ? raw_dir : "";
 
+        // FIX: Her süreç için hangi paketi gördüğümüzü logla -- "waiting" ama hiç log yok sorununu teşhis eder
+        LOGI("[Module] preAppSpecialize: evaluating pkg='%s'", pkg_str.empty() ? "<empty>" : pkg_str.c_str());
+
+        // FIX: JNI string'leri her çıkış yolunda serbest bırak (önceki kodda bazı path'lerde leak vardı)
         if (raw_pkg) env->ReleaseStringUTFChars(args->nice_name,    raw_pkg);
         if (raw_dir) env->ReleaseStringUTFChars(args->app_data_dir, raw_dir);
 
-        if (pkg_str.empty() || shouldIgnoreProcess(pkg_str)) {
+        if (pkg_str.empty()) {
+            LOGW("[Module] preAppSpecialize: empty package name -- unloading");
+            api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
+            return;
+        }
+
+        if (shouldIgnoreProcess(pkg_str)) {
+            LOGI("[Module] preAppSpecialize: system/ignored pkg='%s' -- unloading", pkg_str.c_str());
             api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
             return;
         }
@@ -1162,28 +1190,41 @@ public:
         }
 
         if (config::isExplicitTarget(fresh_cfg)) {
+            // FIX: Eşleşme durumunu her zaman logla (neden kabul/ret edildiğini görmek için)
             if (fresh_cfg.Target_Game != pkg_str) {
+                LOGI("[Module] preAppSpecialize: explicit target='%s' but pkg='%s' -- no match, unloading",
+                     fresh_cfg.Target_Game.c_str(), pkg_str.c_str());
                 api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
                 return;
             }
+            LOGI("[Module] preAppSpecialize: MATCHED explicit target='%s'", pkg_str.c_str());
             prepareTarget(pkg_str, dir_str, fresh_cfg);
             return;
         }
 
         if (config::isWildcardTarget(fresh_cfg)) {
             if (!process_filter::isThirdPartyApp(pkg_str) && !isInstalledAsUserApp(pkg_str)) {
+                LOGI("[Module] preAppSpecialize: wildcard mode but pkg='%s' is not user app -- unloading", pkg_str.c_str());
                 api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
                 return;
             }
+            LOGI("[Module] preAppSpecialize: MATCHED wildcard target='%s'", pkg_str.c_str());
             prepareTarget(pkg_str, dir_str, fresh_cfg);
             return;
         }
 
+        LOGW("[Module] preAppSpecialize: config has no valid target for pkg='%s' -- unloading", pkg_str.c_str());
         api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);
     }
 
     void postAppSpecialize(const rezygisk::AppSpecializeArgs*) override {
         if (!enable_hack_) return;
+
+        // FIX: api pointer kontrolü -- onLoad bug'ından kalan tehlikeye karşı
+        if (!api) {
+            LOGE("[Module] postAppSpecialize: api is NULL -- aborting");
+            return;
+        }
 
         if (isZygoteProcess()) {
             LOGE("[BootGuard] postAppSpecialize called in Zygote context -- cancelled");
