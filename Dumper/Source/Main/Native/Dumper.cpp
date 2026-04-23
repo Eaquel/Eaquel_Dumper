@@ -1155,20 +1155,49 @@ public:
             return;
         }
 
-        const char* raw_pkg = nullptr;
-        const char* raw_dir = nullptr;
-        if (args->nice_name)    raw_pkg = env->GetStringUTFChars(args->nice_name,    nullptr);
-        if (args->app_data_dir) raw_dir = env->GetStringUTFChars(args->app_data_dir, nullptr);
+        const char* raw_nice = nullptr;
+        const char* raw_dir  = nullptr;
+        if (args->nice_name)    raw_nice = env->GetStringUTFChars(args->nice_name,    nullptr);
+        if (args->app_data_dir) raw_dir  = env->GetStringUTFChars(args->app_data_dir, nullptr);
 
-        const std::string pkg_str = raw_pkg ? raw_pkg : "";
-        const std::string dir_str = raw_dir ? raw_dir : "";
+        const std::string nice_str = raw_nice ? raw_nice : "";
+        const std::string dir_str  = raw_dir  ? raw_dir  : "";
 
-        // FIX: Her süreç için hangi paketi gördüğümüzü logla -- "waiting" ama hiç log yok sorununu teşhis eder
-        LOGI("[Module] preAppSpecialize: evaluating pkg='%s'", pkg_str.empty() ? "<empty>" : pkg_str.c_str());
+        // FIX (Samsung/OneUI Android 14-15 Uyumluluğu):
+        // Bu cihazda args->nice_name, paket adı değil selinux profil etiketi taşıyor
+        // (örnek: "platform:privapp:targetSdkVersion=34:complete").
+        // Gerçek paket adı app_data_dir path'inin son segmentinden parse edilmeli:
+        //   /data/data/com.eaquel.service       → com.eaquel.service
+        //   /data/user/0/com.eaquel.service     → com.eaquel.service
+        //   /data/user_de/0/com.eaquel.service  → com.eaquel.service
+        auto extractPkgFromDir = [](const std::string& dir) -> std::string {
+            if (dir.empty()) return {};
+            const size_t last_slash = dir.rfind('/');
+            if (last_slash == std::string::npos) return {};
+            std::string candidate = dir.substr(last_slash + 1);
+            // Geçerli paket adı en az bir nokta içermeli (com.xxx.yyy)
+            if (candidate.find('.') == std::string::npos) return {};
+            return candidate;
+        };
 
-        // FIX: JNI string'leri her çıkış yolunda serbest bırak (önceki kodda bazı path'lerde leak vardı)
-        if (raw_pkg) env->ReleaseStringUTFChars(args->nice_name,    raw_pkg);
-        if (raw_dir) env->ReleaseStringUTFChars(args->app_data_dir, raw_dir);
+        // Önce app_data_dir'den dene (güvenilir kaynak)
+        std::string pkg_str = extractPkgFromDir(dir_str);
+        if (pkg_str.empty()) {
+            // nice_name sadece "com.xxx.yyy" formatındaysa kullan (selinux etiketi değil)
+            if (nice_str.find(':') == std::string::npos &&
+                nice_str.find('.') != std::string::npos) {
+                pkg_str = nice_str;
+            }
+        }
+
+        // JNI string'leri serbest bırak
+        if (raw_nice) env->ReleaseStringUTFChars(args->nice_name,    raw_nice);
+        if (raw_dir)  env->ReleaseStringUTFChars(args->app_data_dir, raw_dir);
+
+        LOGI("[Module] preAppSpecialize: pkg='%s' dir='%s' nice='%s'",
+             pkg_str.empty() ? "<empty>" : pkg_str.c_str(),
+             dir_str.empty()  ? "<empty>" : dir_str.c_str(),
+             nice_str.empty() ? "<empty>" : nice_str.c_str());
 
         if (pkg_str.empty()) {
             LOGW("[Module] preAppSpecialize: empty package name -- unloading");
