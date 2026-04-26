@@ -3,6 +3,10 @@
 #include <jni.h>
 #include <cstdint>
 
+// ReZygisk API sürümü:
+//  v4 → Magisk/Zygisk orijinal uyumu
+//  v5 → Android 15/16, KernelSU, APatch, Kitsune Magisk uyumu
+//       (PROCESS_GRANTED_ROOT / PROCESS_ON_DENYLIST genişletildi)
 #define REZYGISK_API_VERSION 5
 
 namespace rezygisk {
@@ -23,22 +27,29 @@ public:
 };
 
 struct AppSpecializeArgs {
-    jint&         uid;
-    jint&         gid;
-    jintArray&    gids;
-    jint&         runtime_flags;
-    jint&         mount_external;
-    jstring&      se_info;
-    jstring&      nice_name;
-    jstring&      instruction_set;
-    jstring&      app_data_dir;
+    // ── Zorunlu alanlar: tüm Android sürümlerinde garantili ──────────────────
+    // UYARI: Alan sırası Zygisk ABI ile BIREBIR eşleşmeli, aksi halde field
+    // misread oluşur (örn: instruction_set → app_data_dir olarak okunur → 'arm').
+    // Referans: topjohnwu/zygisk-module-sample zygisk.hpp (canonical ABI)
+    jint&          uid;
+    jint&          gid;
+    jintArray&     gids;
+    jint&          runtime_flags;
+    jobjectArray&  rlimits;        // ← EKSİKTİ! Bu yokken tüm sonraki field'lar kayıyordu.
+    jint&          mount_external;
+    jstring&       se_info;
+    jstring&       nice_name;
+    jstring&       instruction_set;
+    jstring&       app_data_dir;
 
-    jboolean* const is_child_zygote;
-    jboolean* const is_top_app;
+    // ── Opsiyonel alanlar: kullanmadan önce NULL kontrolü yapılmalı ──────────
+    jintArray*    const fds_to_ignore;           // Android 12+ (Zygisk v3+)
+    jboolean*     const is_child_zygote;
+    jboolean*     const is_top_app;
     jobjectArray* const pkg_data_info_list;
     jobjectArray* const whitelisted_data_info_list;
-    jboolean* const mount_data_dirs;
-    jboolean* const mount_storage_dirs;
+    jboolean*     const mount_data_dirs;
+    jboolean*     const mount_storage_dirs;
 
     AppSpecializeArgs() = delete;
 };
@@ -60,10 +71,10 @@ enum Option : int {
 };
 
 enum StateFlag : uint32_t {
-    PROCESS_GRANTED_ROOT     = (1u << 0),
-    PROCESS_ON_DENYLIST      = (1u << 1),
-    PROCESS_IS_SYSTEM_SERVER = (1u << 2),
-    PROCESS_IS_ISOLATED      = (1u << 3),
+    PROCESS_GRANTED_ROOT     = (1u << 0),  // Root yetkisi verildi
+    PROCESS_ON_DENYLIST      = (1u << 1),  // Zygisk denylist'te
+    PROCESS_IS_SYSTEM_SERVER = (1u << 2),  // Android 14+: system_server
+    PROCESS_IS_ISOLATED      = (1u << 3),  // Android 14+: isolated process
 };
 
 namespace internal {
