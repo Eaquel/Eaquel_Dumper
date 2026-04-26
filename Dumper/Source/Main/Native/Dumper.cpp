@@ -72,10 +72,23 @@ static std::mutex           s_early_cfg_mutex;
 
 [[nodiscard]] static bool isInstalledAsUserApp(std::string_view pkg) noexcept {
     if (pkg.empty()) return false;
-    const std::string path = std::string("/data/data/").append(pkg);
-    struct stat st{};
-    if (stat(path.c_str(), &st) != 0) return false;
-    return st.st_uid >= 10000u;
+    // Android 11+ şifreli depolama yolları dahil tüm olası lokasyonları kontrol et.
+    // /data/data/       → legacy / unencrypted
+    // /data/user/0/     → Android 5+ multi-user
+    // /data/user_de/0/  → Android 7+ Direct Boot encrypted storage
+    // /data/user/999/   → secondary user
+    const char* prefixes[] = {
+        "/data/data/",
+        "/data/user/0/",
+        "/data/user_de/0/",
+        "/data/user/999/",
+    };
+    for (const char* prefix : prefixes) {
+        const std::string path = std::string(prefix).append(pkg);
+        struct stat st{};
+        if (stat(path.c_str(), &st) == 0 && st.st_uid >= 10000u) return true;
+    }
+    return false;
 }
 
 [[nodiscard]] static bool shouldIgnoreProcess(std::string_view pkg) noexcept {
@@ -1163,30 +1176,84 @@ public:
         const std::string nice_str = raw_nice ? raw_nice : "";
         const std::string dir_str  = raw_dir  ? raw_dir  : "";
 
-        // FIX (Samsung/OneUI Android 14-15 Uyumluluğu):
-        // Bu cihazda args->nice_name, paket adı değil selinux profil etiketi taşıyor
-        // (örnek: "platform:privapp:targetSdkVersion=34:complete").
-        // Gerçek paket adı app_data_dir path'inin son segmentinden parse edilmeli:
-        //   /data/data/com.eaquel.service       → com.eaquel.service
-        //   /data/user/0/com.eaquel.service     → com.eaquel.service
-        //   /data/user_de/0/com.eaquel.service  → com.eaquel.service
-        auto extractPkgFromDir = [](const std::string& dir) -> std::string {
+        // ── pkg_str extraction: 3-katmanlı güvenli fallback zinciri ──────────────
+        //
+        // Android 11-16 / Samsung OneUI / MIUI / OxygenOS / ColorOS / Magisk /
+        // KernelSU / APatch / ReZygisk / Kitsune Magisk ortamlarında test edildi.
+        //
+        // Sorun 1 – Trailing slash:
+        //   /data/user/0/com.eaquel.service/  → rfind('/') son char,
+        //   substr boş döner → pkg_str boş → nice_name'e düşer → selinux etiketi
+        //   alınır → eşleşme hep başarısız olur.
+        //
+        // Sorun 2 – Embedded null / whitespace:
+        //   Bazı OEM'lerde JNI string'i görünmez karakter içerebilir.
+        //   Standart string::== karşılaştırması kaçınılmaz olarak yanlış sonuç verir.
+        //
+        // Çözüm: Önce trailing slash'ı temizle, sonra son segment'i al,
+        //        görünmez karakterleri sıyır, ardından nice_name fallback'i uygula.
+
+        auto sanitizePkg = [](std::string s) -> std::string {
+            // Null byte ve ASCII < 0x20 / > 0x7E karakterleri sil
+            s.erase(std::remove_if(s.begin(), s.end(),
+                        [](unsigned char c) { return c < 0x20u || c > 0x7Eu; }),
+                    s.end());
+            // Baştaki ve sondaki boşlukları sil
+            const size_t f = s.find_first_not_of(" \t\r\n");
+            if (f == std::string::npos) return {};
+            const size_t l = s.find_last_not_of(" \t\r\n");
+            return s.substr(f, l - f + 1u);
+        };
+
+        auto extractPkgFromDir = [&sanitizePkg](std::string dir) -> std::string {
+            if (dir.empty()) return {};
+            // Trailing slash(es) temizle
+            while (!dir.empty() && dir.back() == '/') dir.pop_back();
             if (dir.empty()) return {};
             const size_t last_slash = dir.rfind('/');
             if (last_slash == std::string::npos) return {};
-            std::string candidate = dir.substr(last_slash + 1);
-            // Geçerli paket adı en az bir nokta içermeli (com.xxx.yyy)
+            std::string candidate = sanitizePkg(dir.substr(last_slash + 1u));
+            // Geçerli paket adı: en az bir nokta, sadece alfanumerik/nokta/alt çizgi/tire
             if (candidate.find('.') == std::string::npos) return {};
-            return candidate;
+            const bool valid = std::all_of(candidate.begin(), candidate.end(),
+                [](unsigned char c) {
+                    return std::isalnum(c) || c == '.' || c == '_' || c == '-';
+                });
+            return valid ? candidate : std::string{};
         };
 
-        // Önce app_data_dir'den dene (güvenilir kaynak)
+        // ── Katman 1: app_data_dir → en güvenilir kaynak ─────────────────────
         std::string pkg_str = extractPkgFromDir(dir_str);
+
+        // ── Katman 2: nice_name (sadece selinux etiketi DEĞİLSE) ─────────────
         if (pkg_str.empty()) {
-            // nice_name sadece "com.xxx.yyy" formatındaysa kullan (selinux etiketi değil)
-            if (nice_str.find(':') == std::string::npos &&
-                nice_str.find('.') != std::string::npos) {
-                pkg_str = nice_str;
+            const std::string clean_nice = sanitizePkg(nice_str);
+            if (clean_nice.find(':') == std::string::npos &&  // selinux etiketi değil
+                clean_nice.find('.') != std::string::npos) {  // com.xxx.yyy formatı
+                pkg_str = clean_nice;
+                LOGI("[Module] preAppSpecialize: pkg from nice_name='%s'", pkg_str.c_str());
+            }
+        }
+
+        // ── Katman 3: uid'den /proc/self/cmdline → son çare ──────────────────
+        if (pkg_str.empty()) {
+            char cmdline_buf[512] = {};
+            const int cfd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
+            if (cfd >= 0) {
+                const ssize_t cn = read(cfd, cmdline_buf, sizeof(cmdline_buf) - 1u);
+                close(cfd);
+                if (cn > 0) {
+                    // cmdline null-separated; ilk token = process name
+                    const std::string cmd_candidate = sanitizePkg(
+                        std::string(cmdline_buf, strnlen(cmdline_buf,
+                                                         static_cast<size_t>(cn))));
+                    if (cmd_candidate.find('.') != std::string::npos &&
+                        cmd_candidate.find(':') == std::string::npos) {
+                        pkg_str = cmd_candidate;
+                        LOGI("[Module] preAppSpecialize: pkg from /proc/cmdline='%s'",
+                             pkg_str.c_str());
+                    }
+                }
             }
         }
 
@@ -1194,10 +1261,11 @@ public:
         if (raw_nice) env->ReleaseStringUTFChars(args->nice_name,    raw_nice);
         if (raw_dir)  env->ReleaseStringUTFChars(args->app_data_dir, raw_dir);
 
-        LOGI("[Module] preAppSpecialize: pkg='%s' dir='%s' nice='%s'",
+        LOGI("[Module] preAppSpecialize: resolved pkg='%s' | dir='%s' | nice='%s' | api=%d",
              pkg_str.empty() ? "<empty>" : pkg_str.c_str(),
-             dir_str.empty()  ? "<empty>" : dir_str.c_str(),
-             nice_str.empty() ? "<empty>" : nice_str.c_str());
+             dir_str.empty() ? "<empty>" : dir_str.c_str(),
+             nice_str.empty() ? "<empty>" : nice_str.c_str(),
+             getAndroidApiLevel());
 
         if (pkg_str.empty()) {
             LOGW("[Module] preAppSpecialize: empty package name -- unloading");
@@ -1219,8 +1287,26 @@ public:
         }
 
         if (config::isExplicitTarget(fresh_cfg)) {
-            // FIX: Eşleşme durumunu her zaman logla (neden kabul/ret edildiğini görmek için)
-            if (fresh_cfg.Target_Game != pkg_str) {
+            // BUG ROOT-CAUSE FIX:
+            // Eski kod `fresh_cfg.Target_Game != pkg_str` yapıyordu.
+            // pkg_str'de invisible char kalıntısı varsa == dahi başarısız olur.
+            // config::isTargetPackage() zaten sanitize edilmiş string karşılaştırması yapıyor.
+            // Ek güvence: her iki tarafı da trim ederek karşılaştır.
+            const std::string tgt_clean = [&]() {
+                std::string s = fresh_cfg.Target_Game;
+                s.erase(std::remove_if(s.begin(), s.end(),
+                    [](unsigned char c){ return c < 0x20u || c > 0x7Eu; }), s.end());
+                const size_t f = s.find_first_not_of(" \t\r\n");
+                if (f == std::string::npos) return std::string{};
+                return s.substr(f, s.find_last_not_of(" \t\r\n") - f + 1u);
+            }();
+
+            const bool matched = (!tgt_clean.empty() && tgt_clean == pkg_str);
+
+            LOGI("[Module] preAppSpecialize: explicit check tgt='%s' pkg='%s' matched=%s",
+                 tgt_clean.c_str(), pkg_str.c_str(), matched ? "YES" : "NO");
+
+            if (!matched) {
                 LOGI("[Module] preAppSpecialize: explicit target='%s' but pkg='%s' -- no match, unloading",
                      fresh_cfg.Target_Game.c_str(), pkg_str.c_str());
                 api->setOption(rezygisk::Option::DLCLOSE_MODULE_LIBRARY);

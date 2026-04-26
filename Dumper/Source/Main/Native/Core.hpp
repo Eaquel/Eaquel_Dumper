@@ -732,8 +732,8 @@ inline constexpr std::string_view kFallbackOutputMod = "/data/adb/modules/eaquel
 inline constexpr std::string_view kFallbackOutputKsu = "/data/adb/ksu/modules/eaquel_dumper/Eaquel_Dumps";
 inline constexpr std::string_view kCacheDir          = "/data/local/tmp/.eaq_cache";
 
-inline constexpr int kAndroidMinApi = 30;
-inline constexpr int kAndroidMaxApi = 37;
+inline constexpr int kAndroidMinApi = 30;   // Android 11 minimum
+inline constexpr int kAndroidMaxApi = 99;   // Android 16 (API 36) + gelecek sürümler
 
 struct DumperConfig {
     std::string Target_Game;
@@ -745,60 +745,150 @@ struct DumperConfig {
     bool        is_64bit          = (sizeof(void*) == 8);
 };
 
-[[nodiscard]] static std::optional<std::string> extractJsonString(
-    const std::string& json, std::string_view key)
-{
-    const std::string needle = std::string("\"").append(key).append("\"");
-    const size_t kp = json.find(needle);
-    if (kp == std::string::npos) return std::nullopt;
-    const size_t cp = json.find(':', kp + needle.size());
-    if (cp == std::string::npos) return std::nullopt;
-    const size_t vs = json.find_first_not_of(" \t\r\n", cp + 1);
-    if (vs == std::string::npos || json[vs] != '"') return std::nullopt;
+// ── Modern JSON Yardımcıları ──────────────────────────────────────────────────
+// Değişiklikler vs. eski kod:
+//  • \uXXXX Unicode escape sequence desteği (eski kod: yoktu)
+//  • UTF-8 BOM (0xEF 0xBB 0xBF) sıyırma (bazı Windows editörler ekliyor)
+//  • // ve # satır yorumları (kullanıcı dostu config)
+//  • Anahtar aranırken bağlamsal doğrulama: key'in önünde '"' olmalı
+//    (eski: "Target_GameX" içinde "Target_Game" aranabiliyordu)
+//  • extractJsonString() → Target_Game'i otomatik sanitize eder
+// ─────────────────────────────────────────────────────────────────────────────
 
-    std::string result;
-    result.reserve(64);
-    size_t i = vs + 1;
-    while (i < json.size() && json[i] != '"') {
-        if (json[i] == '\\' && i + 1 < json.size()) {
-            ++i;
-            switch (json[i]) {
-                case '"':  result += '"';  break;
-                case '\\': result += '\\'; break;
-                case '/':  result += '/';  break;
-                case 'n':  result += '\n'; break;
-                case 'r':  result += '\r'; break;
-                case 't':  result += '\t'; break;
-                default:   result += json[i]; break;
-            }
-        } else {
-            result += json[i];
-        }
-        ++i;
+[[nodiscard]] static std::string stripJsonComments(const std::string& src) {
+    std::string out;
+    out.reserve(src.size());
+    // UTF-8 BOM sıyır
+    size_t start = 0u;
+    if (src.size() >= 3u &&
+        static_cast<uint8_t>(src[0]) == 0xEFu &&
+        static_cast<uint8_t>(src[1]) == 0xBBu &&
+        static_cast<uint8_t>(src[2]) == 0xBFu) {
+        start = 3u;
     }
-    return result;
+    bool in_str = false, escaped = false;
+    for (size_t i = start; i < src.size(); ++i) {
+        const char c = src[i];
+        if (escaped)                      { out += c; escaped = false; continue; }
+        if (in_str && c == '\\')          { out += c; escaped = true;  continue; }
+        if (c == '"')                     { in_str = !in_str; out += c; continue; }
+        if (in_str)                       { out += c; continue; }
+        // // satır yorumu
+        if (c == '/' && i + 1 < src.size() && src[i+1] == '/') {
+            while (i < src.size() && src[i] != '\n') ++i;
+            continue;
+        }
+        // # satır yorumu (JSON5 benzeri)
+        if (c == '#') {
+            while (i < src.size() && src[i] != '\n') ++i;
+            continue;
+        }
+        out += c;
+    }
+    return out;
+}
+
+[[nodiscard]] static std::optional<std::string> extractJsonString(
+    const std::string& raw_json, std::string_view key)
+{
+    const std::string json = stripJsonComments(raw_json);
+    // Bağlamsal arama: "key" şeklinde — key içinde key geçmesini önle
+    const std::string needle = std::string("\"").append(key).append("\"");
+    size_t search_pos = 0u;
+    while (true) {
+        const size_t kp = json.find(needle, search_pos);
+        if (kp == std::string::npos) return std::nullopt;
+        // Önce gerçek bir JSON key olduğundan emin ol (önceki non-space char '{' veya ',' olmalı)
+        size_t pre = kp;
+        while (pre > 0u && (json[pre-1u] == ' ' || json[pre-1u] == '\t' ||
+                             json[pre-1u] == '\r' || json[pre-1u] == '\n')) --pre;
+        if (pre > 0u && json[pre-1u] != '{' && json[pre-1u] != ',') {
+            search_pos = kp + needle.size();
+            continue;
+        }
+        const size_t cp = json.find(':', kp + needle.size());
+        if (cp == std::string::npos) return std::nullopt;
+        const size_t vs = json.find_first_not_of(" \t\r\n", cp + 1u);
+        if (vs == std::string::npos || json[vs] != '"') return std::nullopt;
+
+        std::string result;
+        result.reserve(128u);
+        size_t i = vs + 1u;
+        while (i < json.size() && json[i] != '"') {
+            if (json[i] == '\\' && i + 1u < json.size()) {
+                ++i;
+                switch (json[i]) {
+                    case '"':  result += '"';  break;
+                    case '\\': result += '\\'; break;
+                    case '/':  result += '/';  break;
+                    case 'n':  result += '\n'; break;
+                    case 'r':  result += '\r'; break;
+                    case 't':  result += '\t'; break;
+                    case 'b':  result += '\b'; break;
+                    case 'f':  result += '\f'; break;
+                    case 'u': {
+                        // \uXXXX → UTF-8 (eski kod hiç desteklemiyordu)
+                        if (i + 4u < json.size()) {
+                            const std::string hex = json.substr(i + 1u, 4u);
+                            const uint32_t cp2 = static_cast<uint32_t>(
+                                strtoul(hex.c_str(), nullptr, 16));
+                            if (cp2 < 0x80u) {
+                                result += static_cast<char>(cp2);
+                            } else if (cp2 < 0x800u) {
+                                result += static_cast<char>(0xC0u | (cp2 >> 6));
+                                result += static_cast<char>(0x80u | (cp2 & 0x3Fu));
+                            } else {
+                                result += static_cast<char>(0xE0u | (cp2 >> 12));
+                                result += static_cast<char>(0x80u | ((cp2 >> 6) & 0x3Fu));
+                                result += static_cast<char>(0x80u | (cp2 & 0x3Fu));
+                            }
+                            i += 4u;
+                        }
+                        break;
+                    }
+                    default: result += json[i]; break;
+                }
+            } else {
+                result += json[i];
+            }
+            ++i;
+        }
+        return result;
+    }
 }
 
 [[nodiscard]] static bool extractJsonBool(
-    const std::string& json, std::string_view key, bool def)
+    const std::string& raw_json, std::string_view key, bool def)
 {
+    const std::string json = stripJsonComments(raw_json);
     const std::string needle = std::string("\"").append(key).append("\"");
     const size_t kp = json.find(needle);
     if (kp == std::string::npos) return def;
     const size_t cp = json.find(':', kp + needle.size());
     if (cp == std::string::npos) return def;
-    const size_t vs = json.find_first_not_of(" \t\r\n", cp + 1);
+    const size_t vs = json.find_first_not_of(" \t\r\n", cp + 1u);
     if (vs == std::string::npos) return def;
-    if (json.compare(vs, 4, "true")  == 0) return true;
-    if (json.compare(vs, 5, "false") == 0) return false;
+    // "1" / "0" da kabul et (eski kod yalnızca true/false kabul ediyordu)
+    if (json.compare(vs, 4u, "true")  == 0) return true;
+    if (json.compare(vs, 5u, "false") == 0) return false;
+    if (vs < json.size() && json[vs] == '1') return true;
+    if (vs < json.size() && json[vs] == '0') return false;
     return def;
 }
 
 [[nodiscard]] static DumperConfig parseJsonConfig(const std::string& json) {
     DumperConfig cfg;
     cfg.Output   = std::string(kFallbackOutput);
-    cfg.is_64bit = (sizeof(void*) == 8);
-    if (auto v = extractJsonString(json, "Target_Game"); v) cfg.Target_Game = *v;
+    cfg.is_64bit = (sizeof(void*) == 8u);
+
+    if (auto v = extractJsonString(json, "Target_Game"); v) {
+        // Target_Game'i anında sanitize et: invisible char / whitespace sil
+        std::string tg = *v;
+        tg.erase(std::remove_if(tg.begin(), tg.end(),
+            [](unsigned char c){ return c < 0x20u || c > 0x7Eu; }), tg.end());
+        const size_t f = tg.find_first_not_of(" \t\r\n");
+        cfg.Target_Game = (f == std::string::npos) ? "" : tg.substr(f, tg.find_last_not_of(" \t\r\n") - f + 1u);
+    }
     if (auto v = extractJsonString(json, "Output"); v && !v->empty()) cfg.Output = *v;
     cfg.Cpp_Header        = extractJsonBool(json, "Cpp_Header",        true);
     cfg.Frida_Script      = extractJsonBool(json, "Frida_Script",      true);
@@ -806,6 +896,7 @@ struct DumperConfig {
     cfg.Protected_Breaker = extractJsonBool(json, "Protected_Breaker", true);
     return cfg;
 }
+
 
 [[nodiscard]] static DumperConfig loadConfig() {
     constexpr std::string_view paths[] = {

@@ -3,7 +3,7 @@
 #include <jni.h>
 #include <cstdint>
 
-#define REZYGISK_API_VERSION 4
+#define REZYGISK_API_VERSION 5
 
 namespace rezygisk {
 
@@ -60,8 +60,10 @@ enum Option : int {
 };
 
 enum StateFlag : uint32_t {
-    PROCESS_GRANTED_ROOT = (1u << 0),
-    PROCESS_ON_DENYLIST  = (1u << 1),
+    PROCESS_GRANTED_ROOT     = (1u << 0),
+    PROCESS_ON_DENYLIST      = (1u << 1),
+    PROCESS_IS_SYSTEM_SERVER = (1u << 2),
+    PROCESS_IS_ISOLATED      = (1u << 3),
 };
 
 namespace internal {
