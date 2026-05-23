@@ -10,9 +10,6 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
-    plugins {
-        kotlin("android") version "2.3.21" apply false
-    }
 }
 
 dependencyResolutionManagement {
