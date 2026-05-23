@@ -1,0 +1,99 @@
+name: "Eaquel Dumper Root CI"
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - '**.cpp'
+      - '**/CMakeLists.txt'
+      - '**/build.gradle.kts'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.cpp'
+      - '**/CMakeLists.txt'
+      - '**/build.gradle.kts'
+
+env:
+  NDK_VERSION: "29.0.14206865"
+  CMAKE_VERSION: "4.3.2"
+  JAVA_VERSION: "25"
+  GRADLE_VERSION: "9.5.1"
+
+jobs:
+  build:
+    name: "Build Release Matrix"
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: "Checkout Repository"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: "Setup Java Temurin"
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: "Setup Android SDK"
+        uses: android-actions/setup-android@v3
+
+      - name: "Cache NDK & CMake"
+        id: cache-ndk-cmake
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
+            /usr/local/lib/android/sdk/cmake/${{ env.CMAKE_VERSION }}
+          key: ${{ runner.os }}-ndk-${{ env.NDK_VERSION }}-cmake-${{ env.CMAKE_VERSION }}
+
+      - name: "Install NDK & CMake (If not cached)"
+        if: steps.cache-ndk-cmake.outputs.cache-hit != 'true'
+        run: |
+          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --install "ndk;${{ env.NDK_VERSION }}" "cmake;${{ env.CMAKE_VERSION }}"
+
+      - name: "Setup Gradle Properties"
+        run: |
+          mkdir -p ~/.gradle
+          cat <<EOF > ~/.gradle/gradle.properties
+          org.gradle.jvmargs=-Xmx6g -XX:+UseG1GC -XX:MaxMetaspaceSize=1g
+          org.gradle.parallel=true
+          org.gradle.caching=true
+          org.gradle.configuration-cache=true
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          EOF
+
+      - name: "Setup Gradle"
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: "Build Module"
+        run: |
+          ./gradlew :Dumper:assembleRelease \
+            --no-daemon \
+            --parallel \
+            --build-cache
+
+      - name: "Verify Output Integrity"
+        run: |
+          ls -la out/ || true
+          sha256sum out/* || true
+
+      - name: "Upload Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: eaquel-dumper-v2-release
+          path: out/
+          retention-days: 14
+          compression-level: 9
+          if-no-files-found: error
