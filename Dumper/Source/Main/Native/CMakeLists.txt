@@ -30,7 +30,7 @@ if(_HAS_STRICT_FLEX_ARRAYS)
 endif()
 
 set(EAQUEL_CXX_FLAGS -fno-exceptions -fno-rtti)
-set(EAQUEL_RELEASE_FLAGS -O3 -fvisibility=hidden -fvisibility-inlines-hidden -flto=thin -D_FORTIFY_SOURCE=3 -DNDEBUG)
+set(EAQUEL_RELEASE_FLAGS -O3 -fvisibility=hidden -fvisibility-inlines-hidden -flto=thin -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -DNDEBUG)
 set(EAQUEL_DEBUG_FLAGS -O0 -g3 -DDEBUG_BUILD -fno-omit-frame-pointer)
 set(EAQUEL_LINKER_FLAGS -Wl,--hash-style=both -Wl,-z,noexecstack -Wl,--build-id=sha1 -Wl,--no-undefined)
 

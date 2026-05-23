@@ -57,19 +57,19 @@ template <typename... Args>
 }
 
 template <typename... Args>
-[[gnu::always_inline]] inline void logInfo(const char* fmt, Args&&... args) noexcept {
+[[gnu::always_inline]] [[gnu::format(printf,1,2)]] inline void logInfo(const char* fmt, Args&&... args) noexcept {
     __android_log_print(ANDROID_LOG_INFO,
                         kTag.data(), fmt, static_cast<Args&&>(args)...);
 }
 
 template <typename... Args>
-[[gnu::always_inline]] inline void logWarn(const char* fmt, Args&&... args) noexcept {
+[[gnu::always_inline]] [[gnu::format(printf,1,2)]] inline void logWarn(const char* fmt, Args&&... args) noexcept {
     __android_log_print(ANDROID_LOG_WARN,
                         kTag.data(), fmt, static_cast<Args&&>(args)...);
 }
 
 template <typename... Args>
-[[gnu::always_inline]] inline void logError(const char* fmt, Args&&... args) noexcept {
+[[gnu::always_inline]] [[gnu::format(printf,1,2)]] inline void logError(const char* fmt, Args&&... args) noexcept {
     __android_log_print(ANDROID_LOG_ERROR,
                         kTag.data(), fmt, static_cast<Args&&>(args)...);
 }
@@ -1165,7 +1165,6 @@ private:
 
 namespace rezygisk {
 
-struct Api;
 struct AppSpecializeArgs;
 struct ServerSpecializeArgs;
 
@@ -1244,6 +1243,24 @@ enum class StateFlag : uint32_t {
     return (flags & static_cast<uint32_t>(f)) != 0u;
 }
 
+struct Api {
+    [[nodiscard]] int  connectCompanion() noexcept;
+    [[nodiscard]] int  getModuleDir() noexcept;
+    void               setOption(Option opt) noexcept;
+    [[nodiscard]] uint32_t getFlags() noexcept;
+    void               hookJniNativeMethods(JNIEnv* env, const char* className,
+                                            JNINativeMethod* methods, int numMethods) noexcept;
+    void               pltHookRegister(dev_t dev, ino_t inode, const char* symbol,
+                                       void* newFunc, void** oldFunc) noexcept;
+    void               pltHookExclude(const char* regex, const char* symbol) noexcept;
+    [[nodiscard]] bool pltHookCommit() noexcept;
+
+private:
+    internal::api_table* impl = nullptr;
+    template <class T> friend void internal::entry_impl(internal::api_table*, JNIEnv*);
+};
+
+
 namespace internal {
 
 struct api_table;
@@ -1313,23 +1330,6 @@ void entry_impl(api_table* table, JNIEnv* env) {
 }
 
 }
-
-struct Api {
-    [[nodiscard]] int  connectCompanion() noexcept;
-    [[nodiscard]] int  getModuleDir() noexcept;
-    void               setOption(Option opt) noexcept;
-    [[nodiscard]] uint32_t getFlags() noexcept;
-    void               hookJniNativeMethods(JNIEnv* env, const char* className,
-                                            JNINativeMethod* methods, int numMethods) noexcept;
-    void               pltHookRegister(dev_t dev, ino_t inode, const char* symbol,
-                                       void* newFunc, void** oldFunc) noexcept;
-    void               pltHookExclude(const char* regex, const char* symbol) noexcept;
-    [[nodiscard]] bool pltHookCommit() noexcept;
-
-private:
-    internal::api_table* impl = nullptr;
-    template <class T> friend void internal::entry_impl(internal::api_table*, JNIEnv*);
-};
 
 inline int Api::connectCompanion() noexcept {
     return (impl && impl->connectCompanion) ? impl->connectCompanion(impl->_this) : -1;
@@ -1547,8 +1547,14 @@ struct ScopedExecPage {
     ScopedExecPage()                               = default;
     ScopedExecPage(const ScopedExecPage&)          = delete;
     ScopedExecPage& operator=(const ScopedExecPage&) = delete;
-    ScopedExecPage(ScopedExecPage&&)               = delete;
-    ScopedExecPage& operator=(ScopedExecPage&&)    = delete;
+    ScopedExecPage(ScopedExecPage&& o) noexcept
+        : rw_map(o.rw_map), rx_map(o.rx_map), size(o.size), memfd(o.memfd) {
+        o.rw_map = MAP_FAILED; o.rx_map = MAP_FAILED; o.memfd = -1; o.size = 0;
+    }
+    ScopedExecPage& operator=(ScopedExecPage&& o) noexcept {
+        if (this != &o) { release(); rw_map=o.rw_map; rx_map=o.rx_map; size=o.size; memfd=o.memfd;
+        o.rw_map=MAP_FAILED; o.rx_map=MAP_FAILED; o.memfd=-1; o.size=0; } return *this;
+    }
 };
 
 [[nodiscard]] static ScopedExecPage allocTrampolinePage(
@@ -2049,7 +2055,7 @@ static constexpr size_t kHookSize = 5u;
 static void installSigsegvHandler() noexcept {
     struct sigaction sa{};
     sa.sa_sigaction = scanner::sigsegv_handler;
-    sa.sa_flags     = SA_SIGINFO | SA_RESETHAND;
+    sa.sa_flags     = static_cast<int>(SA_SIGINFO | SA_RESETHAND);
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, nullptr);
 }
@@ -2752,7 +2758,6 @@ static void runDump(const std::string& out_dir, const config::DumperConfig& cfg)
     LOGI("runDump: complete  out_dir=%s", out_dir.c_str());
 }
 
-namespace {
 
 [[nodiscard]] static int64_t exponentialDelay(int attempt) noexcept {
     const int clamped = std::min(attempt, 5);
@@ -2831,7 +2836,6 @@ static void hackPrepare(const std::string& game_dir, const std::string& out_dir,
     hackStart(game_dir, out_dir, cfg);
 }
 
-}
 
 class EaquelDumperModule final : public rezygisk::ModuleBase {
 public:
@@ -3146,53 +3150,48 @@ REGISTER_REZYGISK_MODULE(EaquelDumperModule)
 
 #if defined(__arm__) || defined(__aarch64__) || defined(__x86_64__) || defined(__i386__)
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
-    try {
-        if (!vm) return JNI_ERR;
+    if (!vm) return JNI_ERR;
 
-        if (isZygoteProcess()) {
-            LOGI("[BootGuard] JNI_OnLoad: Zygote — safe return");
-            return JNI_VERSION_1_6;
-        }
-        if (!isApiLevelSupported()) {
-            LOGI("[ApiGuard] JNI_OnLoad: API %d not in [%d-%d] — safe return",
-                 getAndroidApiLevel(), config::kAndroidMinApi, config::kAndroidMaxApi);
-            return JNI_VERSION_1_6;
-        }
-
-        LOGI("[JNI_OnLoad] tid=%d", gettid());
-        installSigsegvHandler();
-
-        config::DumperConfig cfg = config::loadConfig();
-        std::string out = cfg.Output.empty()
-                          ? std::string(config::kFallbackOutput)
-                          : cfg.Output;
-        std::string game;
-
-        if (reserved) {
-            const std::string combined{static_cast<const char*>(reserved)};
-            const auto sep = combined.find('|');
-            if (sep != std::string::npos) {
-                game = combined.substr(0u, sep);
-                const std::string explicit_out = combined.substr(sep + 1u);
-                if (!explicit_out.empty()) out = explicit_out;
-            } else {
-                game = combined;
-            }
-        }
-
-        if (cfg.Output.empty()) cfg.Output = out;
-
-        std::thread([g = std::move(game),
-                     o = std::move(out),
-                     c = std::move(cfg)]() mutable noexcept {
-        ::setpriority(PRIO_PROCESS, 0, 19);
-            hackStart(g, o, c);
-        }).detach();
-
+    if (isZygoteProcess()) {
+        LOGI("[BootGuard] JNI_OnLoad: Zygote — safe return");
         return JNI_VERSION_1_6;
-    } catch (...) {
-        LOGE("[JNI_OnLoad] fatal exception");
-        return JNI_ERR;
     }
+    if (!isApiLevelSupported()) {
+        LOGI("[ApiGuard] JNI_OnLoad: API %d not in [%d-%d] — safe return",
+             getAndroidApiLevel(), config::kAndroidMinApi, config::kAndroidMaxApi);
+        return JNI_VERSION_1_6;
+    }
+
+    LOGI("[JNI_OnLoad] tid=%d", gettid());
+    installSigsegvHandler();
+
+    config::DumperConfig cfg = config::loadConfig();
+    std::string out = cfg.Output.empty()
+                      ? std::string(config::kFallbackOutput)
+                      : cfg.Output;
+    std::string game;
+
+    if (reserved) {
+        const std::string combined{static_cast<const char*>(reserved)};
+        const auto sep = combined.find('|');
+        if (sep != std::string::npos) {
+            game = combined.substr(0u, sep);
+            const std::string explicit_out = combined.substr(sep + 1u);
+            if (!explicit_out.empty()) out = explicit_out;
+        } else {
+            game = combined;
+        }
+    }
+
+    if (cfg.Output.empty()) cfg.Output = out;
+
+    std::thread([g = std::move(game),
+                 o = std::move(out),
+                 c = std::move(cfg)]() mutable noexcept {
+    ::setpriority(PRIO_PROCESS, 0, 19);
+        hackStart(g, o, c);
+    }).detach();
+
+    return JNI_VERSION_1_6;
 }
 #endif
