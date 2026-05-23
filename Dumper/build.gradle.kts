@@ -26,6 +26,8 @@ android {
         targetCompatibility = JavaVersion.toVersion(25)
     }
 
+    kotlin { jvmToolchain(25) }
+
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()
 
