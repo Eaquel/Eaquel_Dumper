@@ -19,6 +19,11 @@ dependencyResolutionManagement {
         mavenCentral()
         mavenLocal()
     }
+    versionCatalogs {
+        create("libs") {
+            from(files("Gradle/libs.versions.toml"))
+        }
+    }
 }
 
 rootProject.name = "Eaquel_Dumper"
