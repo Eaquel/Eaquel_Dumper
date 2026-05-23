@@ -57,6 +57,12 @@ android {
         }
     }
 
+    sourceSets {
+        getByName("main") {
+            manifest.srcFile("Source/Main/AndroidManifest.xml")
+        }
+    }
+
     buildFeatures {
         prefab = false
         buildConfig = false
@@ -64,7 +70,7 @@ android {
 
     externalNativeBuild {
         cmake {
-            path = file("CMakeLists.txt")
+            path = file("Source/Main/Native/CMakeLists.txt")
             version = libs.versions.cmakeVersion.get()
         }
     }
