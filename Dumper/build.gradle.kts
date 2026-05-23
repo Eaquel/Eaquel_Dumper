@@ -5,6 +5,7 @@ import org.apache.tools.ant.filters.FixCrLfFilter
 
 plugins {
     alias(libs.plugins.android.library)
+    alias(libs.plugins.kotlin.android)
 }
 
 val moduleLibraryName: String by rootProject.extra
