@@ -45,19 +45,38 @@ jobs:
       - name: "Setup Android SDK"
         uses: android-actions/setup-android@v3
 
-      - name: "Cache NDK & CMake"
-        id: cache-ndk-cmake
+      - name: "Cache NDK"
+        id: cache-ndk
         uses: actions/cache@v4
         with:
-          path: |
-            /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
-            /usr/local/lib/android/sdk/cmake/${{ env.CMAKE_VERSION }}
-          key: ${{ runner.os }}-ndk-${{ env.NDK_VERSION }}-cmake-${{ env.CMAKE_VERSION }}
+          path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
+          key: ${{ runner.os }}-ndk-${{ env.NDK_VERSION }}
 
-      - name: "Install NDK & CMake (If not cached)"
-        if: steps.cache-ndk-cmake.outputs.cache-hit != 'true'
+      - name: "Install NDK (If not cached)"
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
         run: |
-          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --install "ndk;${{ env.NDK_VERSION }}" "cmake;${{ env.CMAKE_VERSION }}"
+          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
+
+      - name: "Cache CMake 4.3.2"
+        id: cache-cmake
+        uses: actions/cache@v4
+        with:
+          path: /opt/cmake-${{ env.CMAKE_VERSION }}
+          key: ${{ runner.os }}-cmake-${{ env.CMAKE_VERSION }}
+
+      - name: "Install CMake 4.3.2 from Kitware (If not cached)"
+        if: steps.cache-cmake.outputs.cache-hit != 'true'
+        run: |
+          wget -q https://github.com/Kitware/CMake/releases/download/v${{ env.CMAKE_VERSION }}/cmake-${{ env.CMAKE_VERSION }}-linux-x86_64.tar.gz -O /tmp/cmake.tar.gz
+          mkdir -p /opt/cmake-${{ env.CMAKE_VERSION }}
+          tar -xzf /tmp/cmake.tar.gz --strip-components=1 -C /opt/cmake-${{ env.CMAKE_VERSION }}
+          rm /tmp/cmake.tar.gz
+
+      - name: "Export CMake to PATH"
+        run: echo "/opt/cmake-${{ env.CMAKE_VERSION }}/bin" >> $GITHUB_PATH
+
+      - name: "Verify CMake Version"
+        run: cmake --version
 
       - name: "Setup Gradle Properties"
         run: |
@@ -83,6 +102,9 @@ jobs:
             --no-daemon \
             --parallel \
             --build-cache
+        env:
+          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
+          CMAKE_PREFIX_PATH: /opt/cmake-${{ env.CMAKE_VERSION }}
 
       - name: "Verify Output Integrity"
         run: |
