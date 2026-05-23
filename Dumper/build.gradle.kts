@@ -53,18 +53,6 @@ android {
                 }
             }
         }
-        debug {
-            isMinifyEnabled = false
-            isDebuggable = true
-            externalNativeBuild {
-                cmake {
-                    arguments(
-                        "-DCMAKE_BUILD_TYPE=Debug",
-                        "-DEAQUEL_ENABLE_UBSAN=ON"
-                    )
-                }
-            }
-        }
     }
 
     buildFeatures {
@@ -92,11 +80,11 @@ android {
 
 androidComponents {
     onVariants { variant ->
-        val variantCapped = variant.name.replaceFirstChar { it.uppercase() }
-        val variantLower  = variant.name.lowercase()
-        val skeletonDir      = outDir
+        val variantCapped  = variant.name.replaceFirstChar { it.uppercase() }
+        val variantLower   = variant.name.lowercase()
+        val skeletonDir       = outDir
         val skeletonZygiskDir = skeletonDir.resolve("zygisk")
-        val capturedLibName  = moduleLibraryName
+        val capturedLibName   = moduleLibraryName
 
         val prepareTask = tasks.register<Sync>("prepareSkeleton$variantCapped") {
             dependsOn("strip${variantCapped}DebugSymbols")
