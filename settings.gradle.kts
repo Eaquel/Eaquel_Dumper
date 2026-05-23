@@ -10,12 +10,8 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
-    resolutionStrategy {
-        eachPlugin {
-            if (requested.id.namespace == "org.jetbrains.kotlin") {
-                useVersion("2.3.21")
-            }
-        }
+    plugins {
+        kotlin("android") version "2.3.21" apply false
     }
 }
 
