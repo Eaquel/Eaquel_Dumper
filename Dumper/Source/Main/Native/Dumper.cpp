@@ -57,22 +57,28 @@ template <typename... Args>
 }
 
 template <typename... Args>
-[[gnu::always_inline]] [[gnu::format(printf,1,2)]] inline void logInfo(const char* fmt, Args&&... args) noexcept {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+#pragma clang diagnostic ignored "-Wformat-security"
+
+[[gnu::always_inline]] inline void logInfo(const char* fmt, Args&&... args) noexcept {
     __android_log_print(ANDROID_LOG_INFO,
                         kTag.data(), fmt, static_cast<Args&&>(args)...);
 }
 
 template <typename... Args>
-[[gnu::always_inline]] [[gnu::format(printf,1,2)]] inline void logWarn(const char* fmt, Args&&... args) noexcept {
+[[gnu::always_inline]] inline void logWarn(const char* fmt, Args&&... args) noexcept {
     __android_log_print(ANDROID_LOG_WARN,
                         kTag.data(), fmt, static_cast<Args&&>(args)...);
 }
 
 template <typename... Args>
-[[gnu::always_inline]] [[gnu::format(printf,1,2)]] inline void logError(const char* fmt, Args&&... args) noexcept {
+[[gnu::always_inline]] inline void logError(const char* fmt, Args&&... args) noexcept {
     __android_log_print(ANDROID_LOG_ERROR,
                         kTag.data(), fmt, static_cast<Args&&>(args)...);
 }
+
+#pragma clang diagnostic pop
 
 }
 
@@ -1165,6 +1171,7 @@ private:
 
 namespace rezygisk {
 
+struct Api;
 struct AppSpecializeArgs;
 struct ServerSpecializeArgs;
 
@@ -1243,24 +1250,6 @@ enum class StateFlag : uint32_t {
     return (flags & static_cast<uint32_t>(f)) != 0u;
 }
 
-struct Api {
-    [[nodiscard]] int  connectCompanion() noexcept;
-    [[nodiscard]] int  getModuleDir() noexcept;
-    void               setOption(Option opt) noexcept;
-    [[nodiscard]] uint32_t getFlags() noexcept;
-    void               hookJniNativeMethods(JNIEnv* env, const char* className,
-                                            JNINativeMethod* methods, int numMethods) noexcept;
-    void               pltHookRegister(dev_t dev, ino_t inode, const char* symbol,
-                                       void* newFunc, void** oldFunc) noexcept;
-    void               pltHookExclude(const char* regex, const char* symbol) noexcept;
-    [[nodiscard]] bool pltHookCommit() noexcept;
-
-private:
-    internal::api_table* impl = nullptr;
-    template <class T> friend void internal::entry_impl(internal::api_table*, JNIEnv*);
-};
-
-
 namespace internal {
 
 struct api_table;
@@ -1329,7 +1318,24 @@ void entry_impl(api_table* table, JNIEnv* env) {
     module->onLoad(api, env);
 }
 
-}
+} // namespace internal
+
+struct Api {
+    [[nodiscard]] int  connectCompanion() noexcept;
+    [[nodiscard]] int  getModuleDir() noexcept;
+    void               setOption(Option opt) noexcept;
+    [[nodiscard]] uint32_t getFlags() noexcept;
+    void               hookJniNativeMethods(JNIEnv* env, const char* className,
+                                            JNINativeMethod* methods, int numMethods) noexcept;
+    void               pltHookRegister(dev_t dev, ino_t inode, const char* symbol,
+                                       void* newFunc, void** oldFunc) noexcept;
+    void               pltHookExclude(const char* regex, const char* symbol) noexcept;
+    [[nodiscard]] bool pltHookCommit() noexcept;
+
+private:
+    internal::api_table* impl = nullptr;
+    template <class T> friend void internal::entry_impl(internal::api_table*, JNIEnv*);
+};
 
 inline int Api::connectCompanion() noexcept {
     return (impl && impl->connectCompanion) ? impl->connectCompanion(impl->_this) : -1;
@@ -1388,7 +1394,8 @@ inline bool Api::pltHookCommit() noexcept {
 
 #define REGISTER_ZYGISK_COMPANION(func) REGISTER_REZYGISK_COMPANION(func)
 
-}
+} // namespace rezygisk
+
 
 namespace zygisk = rezygisk;
 
@@ -1821,7 +1828,7 @@ static_assert(sizeof(Trampoline) <= 64u, "Trampoline must fit in one cache line 
     exec_page.memfd  = -1;
 
     LOGI("hook[arm64]: target=%p hook=%p tramp=%p (dual_map=%d)",
-         target, hook, tramp_rx, static_cast<int>(has_dual_map));
+         target, hook, static_cast<void*>(tramp_rx), static_cast<int>(has_dual_map));
     return true;
 }
 
