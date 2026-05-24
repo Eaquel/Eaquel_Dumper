@@ -1175,23 +1175,6 @@ struct Api;
 struct AppSpecializeArgs;
 struct ServerSpecializeArgs;
 
-class ModuleBase {
-public:
-    virtual void onLoad([[maybe_unused]] Api* api,
-                        [[maybe_unused]] JNIEnv* env) noexcept {}
-    virtual void preAppSpecialize([[maybe_unused]] AppSpecializeArgs* args) noexcept {}
-    virtual void postAppSpecialize([[maybe_unused]] const AppSpecializeArgs* args) noexcept {}
-    virtual void preServerSpecialize([[maybe_unused]] ServerSpecializeArgs* args) noexcept {}
-    virtual void postServerSpecialize([[maybe_unused]] const ServerSpecializeArgs* args) noexcept {}
-    virtual ~ModuleBase() = default;
-
-    ModuleBase()                             = default;
-    ModuleBase(const ModuleBase&)            = delete;
-    ModuleBase& operator=(const ModuleBase&) = delete;
-    ModuleBase(ModuleBase&&)                 = delete;
-    ModuleBase& operator=(ModuleBase&&)      = delete;
-};
-
 struct AppSpecializeArgs {
     jint&          uid;
     jint&          gid;
@@ -1230,6 +1213,23 @@ struct ServerSpecializeArgs {
     ServerSpecializeArgs& operator=(const ServerSpecializeArgs&) = delete;
 };
 
+class ModuleBase {
+public:
+    virtual void onLoad([[maybe_unused]] Api* api,
+                        [[maybe_unused]] JNIEnv* env) noexcept {}
+    virtual void preAppSpecialize([[maybe_unused]] AppSpecializeArgs* args) noexcept {}
+    virtual void postAppSpecialize([[maybe_unused]] const AppSpecializeArgs* args) noexcept {}
+    virtual void preServerSpecialize([[maybe_unused]] ServerSpecializeArgs* args) noexcept {}
+    virtual void postServerSpecialize([[maybe_unused]] const ServerSpecializeArgs* args) noexcept {}
+    virtual ~ModuleBase() = default;
+
+    ModuleBase()                             = default;
+    ModuleBase(const ModuleBase&)            = delete;
+    ModuleBase& operator=(const ModuleBase&) = delete;
+    ModuleBase(ModuleBase&&)                 = delete;
+    ModuleBase& operator=(ModuleBase&&)      = delete;
+};
+
 enum class Option : int {
     FORCE_DENYLIST_UNMOUNT = 0,
     DLCLOSE_MODULE_LIBRARY = 1,
@@ -1243,19 +1243,45 @@ enum class StateFlag : uint32_t {
 };
 
 [[nodiscard]] constexpr StateFlag operator|(StateFlag a, StateFlag b) noexcept {
-    return static_cast<StateFlag>(
-        static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+    return static_cast<StateFlag>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
 }
 [[nodiscard]] constexpr bool hasFlag(uint32_t flags, StateFlag f) noexcept {
     return (flags & static_cast<uint32_t>(f)) != 0u;
 }
 
+struct Api {
+    [[nodiscard]] int      connectCompanion() noexcept;
+    [[nodiscard]] int      getModuleDir() noexcept;
+    void                   setOption(Option opt) noexcept;
+    [[nodiscard]] uint32_t getFlags() noexcept;
+    void                   hookJniNativeMethods(JNIEnv* env, const char* className,
+                                                JNINativeMethod* methods, int numMethods) noexcept;
+    void                   pltHookRegister(dev_t dev, ino_t inode, const char* symbol,
+                                           void* newFunc, void** oldFunc) noexcept;
+    void                   pltHookExclude(const char* regex, const char* symbol) noexcept;
+    [[nodiscard]] bool     pltHookCommit() noexcept;
+
+private:
+    struct api_table* impl = nullptr;
+    template <class T> friend void entry_impl_fn(Api*, ModuleBase*, JNIEnv*);
+};
+
 namespace internal {
 
-struct api_table;
+struct api_table {
+    void* _this;
+    bool (*registerModule)(api_table*, struct module_abi*);
 
-template <class T>
-void entry_impl(api_table*, JNIEnv*);
+    void (*hookJniNativeMethods)(JNIEnv*, const char*, JNINativeMethod*, int);
+    void (*pltHookRegister)(dev_t, ino_t, const char*, void*, void**);
+    void (*pltHookExclude)(const char*, const char*);
+    bool (*pltHookCommit)();
+
+    int      (*connectCompanion)(void*);
+    void     (*setOption)(void*, int);
+    int      (*getModuleDir)(void*);
+    uint32_t (*getFlags)(void*);
+};
 
 struct module_abi {
     int32_t     api_version;
@@ -1270,36 +1296,21 @@ struct module_abi {
         : api_version(static_cast<int32_t>(REZYGISK_API_VERSION))
         , _this(module)
     {
-        preAppSpecialize     = [](ModuleBase* s, AppSpecializeArgs* a) noexcept        { s->preAppSpecialize(a);     };
-        postAppSpecialize    = [](ModuleBase* s, const AppSpecializeArgs* a) noexcept  { s->postAppSpecialize(a);    };
-        preServerSpecialize  = [](ModuleBase* s, ServerSpecializeArgs* a) noexcept     { s->preServerSpecialize(a);  };
-        postServerSpecialize = [](ModuleBase* s, const ServerSpecializeArgs* a) noexcept { s->postServerSpecialize(a); };
+        preAppSpecialize     = [](ModuleBase* s, AppSpecializeArgs* a) noexcept          { s->preAppSpecialize(a);      };
+        postAppSpecialize    = [](ModuleBase* s, const AppSpecializeArgs* a) noexcept    { s->postAppSpecialize(a);     };
+        preServerSpecialize  = [](ModuleBase* s, ServerSpecializeArgs* a) noexcept       { s->preServerSpecialize(a);   };
+        postServerSpecialize = [](ModuleBase* s, const ServerSpecializeArgs* a) noexcept { s->postServerSpecialize(a);  };
     }
-};
-
-struct api_table {
-    void* _this;
-    bool (*registerModule)(api_table*, module_abi*);
-
-    void (*hookJniNativeMethods)(JNIEnv*, const char*, JNINativeMethod*, int);
-    void (*pltHookRegister)(dev_t, ino_t, const char*, void*, void**);
-    void (*pltHookExclude)(const char*, const char*);
-    bool (*pltHookCommit)();
-
-    int      (*connectCompanion)(void*);
-    void     (*setOption)(void*, int);
-    int      (*getModuleDir)(void*);
-    uint32_t (*getFlags)(void*);
 };
 
 template <class T>
 void entry_impl(api_table* table, JNIEnv* env) {
     if (!table) return;
 
-    auto* module   = new (std::nothrow) T();
+    auto* module = new (std::nothrow) T();
     if (!module) return;
 
-    auto* mod_abi  = new (std::nothrow) module_abi(module);
+    auto* mod_abi = new (std::nothrow) module_abi(module);
     if (!mod_abi) { delete module; return; }
 
     if (!table->registerModule(table, mod_abi)) {
@@ -1309,33 +1320,12 @@ void entry_impl(api_table* table, JNIEnv* env) {
     }
 
     auto* api = new (std::nothrow) Api();
-    if (!api) {
-        delete mod_abi;
-        delete module;
-        return;
-    }
+    if (!api) { delete mod_abi; delete module; return; }
     api->impl = table;
     module->onLoad(api, env);
 }
 
 } // namespace internal
-
-struct Api {
-    [[nodiscard]] int  connectCompanion() noexcept;
-    [[nodiscard]] int  getModuleDir() noexcept;
-    void               setOption(Option opt) noexcept;
-    [[nodiscard]] uint32_t getFlags() noexcept;
-    void               hookJniNativeMethods(JNIEnv* env, const char* className,
-                                            JNINativeMethod* methods, int numMethods) noexcept;
-    void               pltHookRegister(dev_t dev, ino_t inode, const char* symbol,
-                                       void* newFunc, void** oldFunc) noexcept;
-    void               pltHookExclude(const char* regex, const char* symbol) noexcept;
-    [[nodiscard]] bool pltHookCommit() noexcept;
-
-private:
-    internal::api_table* impl = nullptr;
-    template <class T> friend void internal::entry_impl(internal::api_table*, JNIEnv*);
-};
 
 inline int Api::connectCompanion() noexcept {
     return (impl && impl->connectCompanion) ? impl->connectCompanion(impl->_this) : -1;
@@ -1395,6 +1385,9 @@ inline bool Api::pltHookCommit() noexcept {
 #define REGISTER_ZYGISK_COMPANION(func) REGISTER_REZYGISK_COMPANION(func)
 
 } // namespace rezygisk
+
+namespace zygisk = rezygisk;
+
 
 
 namespace zygisk = rezygisk;
