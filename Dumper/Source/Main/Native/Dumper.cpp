@@ -1176,27 +1176,27 @@ struct AppSpecializeArgs;
 struct ServerSpecializeArgs;
 
 struct AppSpecializeArgs {
-    jint&          uid;
-    jint&          gid;
-    jintArray&     gids;
-    jint&          runtime_flags;
-    jobjectArray&  rlimits;
-    jint&          mount_external;
-    jstring&       se_info;
-    jstring&       nice_name;
-    jstring&       instruction_set;
-    jstring&       app_data_dir;
+    jint&         uid;
+    jint&         gid;
+    jintArray&    gids;
+    jint&         runtime_flags;
+    jobjectArray& rlimits;
+    jint&         mount_external;
+    jstring&      se_info;
+    jstring&      nice_name;
+    jstring&      instruction_set;
+    jstring&      app_data_dir;
 
-    jintArray*     const fds_to_ignore;
-    jboolean*      const is_child_zygote;
-    jboolean*      const is_top_app;
-    jobjectArray*  const pkg_data_info_list;
-    jobjectArray*  const whitelisted_data_info_list;
-    jboolean*      const mount_data_dirs;
-    jboolean*      const mount_storage_dirs;
+    jintArray*    const fds_to_ignore;
+    jboolean*     const is_child_zygote;
+    jboolean*     const is_top_app;
+    jobjectArray* const pkg_data_info_list;
+    jobjectArray* const whitelisted_data_info_list;
+    jboolean*     const mount_data_dirs;
+    jboolean*     const mount_storage_dirs;
 
-    AppSpecializeArgs() = delete;
-    AppSpecializeArgs(const AppSpecializeArgs&) = delete;
+    AppSpecializeArgs()                              = delete;
+    AppSpecializeArgs(const AppSpecializeArgs&)      = delete;
     AppSpecializeArgs& operator=(const AppSpecializeArgs&) = delete;
 };
 
@@ -1208,8 +1208,8 @@ struct ServerSpecializeArgs {
     jlong&     permitted_capabilities;
     jlong&     effective_capabilities;
 
-    ServerSpecializeArgs() = delete;
-    ServerSpecializeArgs(const ServerSpecializeArgs&) = delete;
+    ServerSpecializeArgs()                               = delete;
+    ServerSpecializeArgs(const ServerSpecializeArgs&)    = delete;
     ServerSpecializeArgs& operator=(const ServerSpecializeArgs&) = delete;
 };
 
@@ -1223,11 +1223,11 @@ public:
     virtual void postServerSpecialize([[maybe_unused]] const ServerSpecializeArgs* args) noexcept {}
     virtual ~ModuleBase() = default;
 
-    ModuleBase()                             = default;
-    ModuleBase(const ModuleBase&)            = delete;
-    ModuleBase& operator=(const ModuleBase&) = delete;
-    ModuleBase(ModuleBase&&)                 = delete;
-    ModuleBase& operator=(ModuleBase&&)      = delete;
+    ModuleBase()                               = default;
+    ModuleBase(const ModuleBase&)              = delete;
+    ModuleBase& operator=(const ModuleBase&)   = delete;
+    ModuleBase(ModuleBase&&)                   = delete;
+    ModuleBase& operator=(ModuleBase&&)        = delete;
 };
 
 enum class Option : int {
@@ -1249,34 +1249,17 @@ enum class StateFlag : uint32_t {
     return (flags & static_cast<uint32_t>(f)) != 0u;
 }
 
-struct Api {
-    [[nodiscard]] int      connectCompanion() noexcept;
-    [[nodiscard]] int      getModuleDir() noexcept;
-    void                   setOption(Option opt) noexcept;
-    [[nodiscard]] uint32_t getFlags() noexcept;
-    void                   hookJniNativeMethods(JNIEnv* env, const char* className,
-                                                JNINativeMethod* methods, int numMethods) noexcept;
-    void                   pltHookRegister(dev_t dev, ino_t inode, const char* symbol,
-                                           void* newFunc, void** oldFunc) noexcept;
-    void                   pltHookExclude(const char* regex, const char* symbol) noexcept;
-    [[nodiscard]] bool     pltHookCommit() noexcept;
-
-private:
-    struct api_table* impl = nullptr;
-    template <class T> friend void entry_impl_fn(Api*, ModuleBase*, JNIEnv*);
-};
-
 namespace internal {
+
+struct module_abi;
 
 struct api_table {
     void* _this;
-    bool (*registerModule)(api_table*, struct module_abi*);
-
+    bool (*registerModule)(api_table*, module_abi*);
     void (*hookJniNativeMethods)(JNIEnv*, const char*, JNINativeMethod*, int);
     void (*pltHookRegister)(dev_t, ino_t, const char*, void*, void**);
     void (*pltHookExclude)(const char*, const char*);
     bool (*pltHookCommit)();
-
     int      (*connectCompanion)(void*);
     void     (*setOption)(void*, int);
     int      (*getModuleDir)(void*);
@@ -1286,46 +1269,39 @@ struct api_table {
 struct module_abi {
     int32_t     api_version;
     ModuleBase* _this;
-
     void (*preAppSpecialize)    (ModuleBase*, AppSpecializeArgs*);
     void (*postAppSpecialize)   (ModuleBase*, const AppSpecializeArgs*);
     void (*preServerSpecialize) (ModuleBase*, ServerSpecializeArgs*);
     void (*postServerSpecialize)(ModuleBase*, const ServerSpecializeArgs*);
 
-    explicit module_abi(ModuleBase* module) noexcept
-        : api_version(static_cast<int32_t>(REZYGISK_API_VERSION))
-        , _this(module)
+    explicit module_abi(ModuleBase* m) noexcept
+        : api_version(static_cast<int32_t>(REZYGISK_API_VERSION)), _this(m)
     {
-        preAppSpecialize     = [](ModuleBase* s, AppSpecializeArgs* a) noexcept          { s->preAppSpecialize(a);      };
-        postAppSpecialize    = [](ModuleBase* s, const AppSpecializeArgs* a) noexcept    { s->postAppSpecialize(a);     };
-        preServerSpecialize  = [](ModuleBase* s, ServerSpecializeArgs* a) noexcept       { s->preServerSpecialize(a);   };
-        postServerSpecialize = [](ModuleBase* s, const ServerSpecializeArgs* a) noexcept { s->postServerSpecialize(a);  };
+        preAppSpecialize     = [](ModuleBase* s, AppSpecializeArgs* a) noexcept          { s->preAppSpecialize(a);     };
+        postAppSpecialize    = [](ModuleBase* s, const AppSpecializeArgs* a) noexcept    { s->postAppSpecialize(a);    };
+        preServerSpecialize  = [](ModuleBase* s, ServerSpecializeArgs* a) noexcept       { s->preServerSpecialize(a);  };
+        postServerSpecialize = [](ModuleBase* s, const ServerSpecializeArgs* a) noexcept { s->postServerSpecialize(a); };
     }
 };
 
-template <class T>
-void entry_impl(api_table* table, JNIEnv* env) {
-    if (!table) return;
-
-    auto* module = new (std::nothrow) T();
-    if (!module) return;
-
-    auto* mod_abi = new (std::nothrow) module_abi(module);
-    if (!mod_abi) { delete module; return; }
-
-    if (!table->registerModule(table, mod_abi)) {
-        delete mod_abi;
-        delete module;
-        return;
-    }
-
-    auto* api = new (std::nothrow) Api();
-    if (!api) { delete mod_abi; delete module; return; }
-    api->impl = table;
-    module->onLoad(api, env);
-}
-
 } // namespace internal
+
+struct Api {
+    [[nodiscard]] int      connectCompanion() noexcept;
+    [[nodiscard]] int      getModuleDir()     noexcept;
+    void                   setOption(Option opt) noexcept;
+    [[nodiscard]] uint32_t getFlags()         noexcept;
+    void hookJniNativeMethods(JNIEnv* env, const char* cls,
+                               JNINativeMethod* methods, int n) noexcept;
+    void pltHookRegister(dev_t dev, ino_t ino, const char* sym,
+                          void* nf, void** of) noexcept;
+    void pltHookExclude(const char* re, const char* sym) noexcept;
+    [[nodiscard]] bool pltHookCommit() noexcept;
+
+private:
+    internal::api_table* impl = nullptr;
+    template <class T> friend void internal_entry_impl(internal::api_table*, JNIEnv*);
+};
 
 inline int Api::connectCompanion() noexcept {
     return (impl && impl->connectCompanion) ? impl->connectCompanion(impl->_this) : -1;
@@ -1334,57 +1310,64 @@ inline int Api::getModuleDir() noexcept {
     return (impl && impl->getModuleDir) ? impl->getModuleDir(impl->_this) : -1;
 }
 inline void Api::setOption(Option opt) noexcept {
-    if (impl && impl->setOption)
-        impl->setOption(impl->_this, static_cast<int>(opt));
+    if (impl && impl->setOption) impl->setOption(impl->_this, static_cast<int>(opt));
 }
 inline uint32_t Api::getFlags() noexcept {
     return (impl && impl->getFlags) ? impl->getFlags(impl->_this) : 0u;
 }
 inline void Api::hookJniNativeMethods(JNIEnv* env, const char* cls,
-                                      JNINativeMethod* m, int n) noexcept {
-    if (impl && impl->hookJniNativeMethods)
-        impl->hookJniNativeMethods(env, cls, m, n);
+                                       JNINativeMethod* m, int n) noexcept {
+    if (impl && impl->hookJniNativeMethods) impl->hookJniNativeMethods(env, cls, m, n);
 }
 inline void Api::pltHookRegister(dev_t dev, ino_t ino, const char* sym,
                                   void* nf, void** of) noexcept {
-    if (impl && impl->pltHookRegister)
-        impl->pltHookRegister(dev, ino, sym, nf, of);
+    if (impl && impl->pltHookRegister) impl->pltHookRegister(dev, ino, sym, nf, of);
 }
 inline void Api::pltHookExclude(const char* re, const char* sym) noexcept {
-    if (impl && impl->pltHookExclude)
-        impl->pltHookExclude(re, sym);
+    if (impl && impl->pltHookExclude) impl->pltHookExclude(re, sym);
 }
 inline bool Api::pltHookCommit() noexcept {
     return (impl && impl->pltHookCommit) ? impl->pltHookCommit() : false;
 }
 
-#define REGISTER_REZYGISK_MODULE(clazz)                                              \
-    namespace rezygisk { namespace internal {                                        \
-        void rezygisk_module_entry_impl(::rezygisk::internal::api_table* t,          \
-                                        JNIEnv* e) {                                 \
-            ::rezygisk::internal::entry_impl<clazz>(t, e);                           \
-        }                                                                            \
-    }}                                                                               \
-    extern "C" [[gnu::visibility("default")]] [[gnu::used]]                          \
-    void rezygisk_module_entry(::rezygisk::internal::api_table* t, JNIEnv* e) {      \
-        ::rezygisk::internal::entry_impl<clazz>(t, e);                               \
-    }                                                                                \
-    extern "C" [[gnu::visibility("default")]] [[gnu::used]]                          \
-    void zygisk_module_entry(::rezygisk::internal::api_table* t, JNIEnv* e) {        \
-        ::rezygisk::internal::entry_impl<clazz>(t, e);                               \
+template <class T>
+void internal_entry_impl(internal::api_table* table, JNIEnv* env) {
+    if (!table) return;
+    auto* module = new (std::nothrow) T();
+    if (!module) return;
+    auto* mod_abi = new (std::nothrow) internal::module_abi(module);
+    if (!mod_abi) { delete module; return; }
+    if (!table->registerModule(table, mod_abi)) { delete mod_abi; delete module; return; }
+    auto* api = new (std::nothrow) Api();
+    if (!api) { delete mod_abi; delete module; return; }
+    api->impl = table;
+    module->onLoad(api, env);
+}
+
+#define REGISTER_REZYGISK_MODULE(clazz)                                                  \
+    extern "C" [[gnu::visibility("default")]] [[gnu::used]]                              \
+    void rezygisk_module_entry(::rezygisk::internal::api_table* t, JNIEnv* e) {          \
+        ::rezygisk::internal_entry_impl<clazz>(t, e);                                    \
+    }                                                                                    \
+    extern "C" [[gnu::visibility("default")]] [[gnu::used]]                              \
+    void zygisk_module_entry(::rezygisk::internal::api_table* t, JNIEnv* e) {            \
+        ::rezygisk::internal_entry_impl<clazz>(t, e);                                    \
     }
 
-#define REGISTER_ZYGISK_MODULE(clazz) REGISTER_REZYGISK_MODULE(clazz)
+#define REGISTER_ZYGISK_MODULE(clazz)    REGISTER_REZYGISK_MODULE(clazz)
 
-#define REGISTER_REZYGISK_COMPANION(func)                                            \
-    extern "C" [[gnu::visibility("default")]] [[gnu::used]]                          \
-    void rezygisk_companion_entry(int client) { (func)(client); }                    \
-    extern "C" [[gnu::visibility("default")]] [[gnu::used]]                          \
+#define REGISTER_REZYGISK_COMPANION(func)                                                \
+    extern "C" [[gnu::visibility("default")]] [[gnu::used]]                              \
+    void rezygisk_companion_entry(int client) { (func)(client); }                        \
+    extern "C" [[gnu::visibility("default")]] [[gnu::used]]                              \
     void zygisk_companion_entry(int client) { (func)(client); }
 
 #define REGISTER_ZYGISK_COMPANION(func) REGISTER_REZYGISK_COMPANION(func)
 
 } // namespace rezygisk
+
+namespace zygisk = rezygisk;
+
 
 namespace zygisk = rezygisk;
 
